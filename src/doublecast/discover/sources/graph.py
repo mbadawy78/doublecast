@@ -140,11 +140,7 @@ class GraphSource(Source):
             name = item.get("name", "")
             if not name.lower().endswith((".xlsx", ".xlsm", ".csv")):
                 continue
-            r = self.api.client.get(
-                f"{GRAPH}/sites/{site_id}/drive/items/{item['id']}/content",
-                headers=self.api._h(),
-                follow_redirects=True,
-            )  # noqa: SLF001
+            r = self.api.download(f"{GRAPH}/sites/{site_id}/drive/items/{item['id']}/content")
             if r.status_code != 200:
                 self.skipped.append(f"{site_name}/{name}: HTTP {r.status_code}")
                 continue
@@ -167,3 +163,4 @@ class GraphSource(Source):
     def close(self) -> None:
         if self._tmp is not None:
             self._tmp.cleanup()  # downloaded copies never outlive the scan
+        self.api.close()

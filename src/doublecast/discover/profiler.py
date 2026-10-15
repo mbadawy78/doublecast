@@ -37,7 +37,7 @@ HEADER_KEYWORDS: dict[str, list[str]] = {
     "ORG": _f(
         "customer,client,account name,chain,retailer,distributor,wholesaler,supplier,vendor,company,partner,buyer,"
         "consignee,sold-to,ship-to,bill-to,sold to,ship to,bill to,debtor,creditor,payer,payee,organisation,"
-        "organization,banner,key account,πελατ,προμηθευτ,εταιρ,αλυσιδ,συνεργατ,επωνυμια,αντισυμβαλλ,χρεωστ,πιστωτ,"
+        "organization,banner,key account,cust,vend,invoice account,legal entity,πελατ,προμηθευτ,εταιρ,αλυσιδ,συνεργατ,επωνυμια,αντισυμβαλλ,χρεωστ,πιστωτ,"
         "kunde,lieferant,firma,unternehmen,handelspartner,fournisseur,societe,raison sociale,cliente,fornitore,"
         "azienda,ragione sociale,proveedor,empresa,razon social"
     ),
@@ -45,7 +45,7 @@ HEADER_KEYWORDS: dict[str, list[str]] = {
         "employee,worker,staff,personnel,fullname,firstname,lastname,salesperson,sales rep,salesman,account manager,manager,driver,contact person,"
         "contact name,owner,first name,last name,full name,surname,given name,created by,modified by,approved by,"
         "assigned to,requester,representative,agent,technician,operator,user name,username,υπαλλ,εργαζομ,πωλητ,"
-        "οδηγ,υπευθυν,επαφη,ονοματεπωνυμο,επωνυμο,μισθωτ,χειριστ,mitarbeiter,verkaufer,fahrer,"
+        "οδηγο,οδηγου,υπευθυν,επαφη,ονοματεπωνυμο,επωνυμο,μισθωτ,χειριστ,mitarbeiter,verkaufer,fahrer,"
         "ansprechpartner,vorname,nachname,sachbearbeiter,employe,commercial,chauffeur,prenom,interlocuteur,"
         "dipendente,venditore,autista,cognome,referente,empleado,vendedor,conductor,apellido,responsable"
     ),
@@ -56,7 +56,7 @@ HEADER_KEYWORDS: dict[str, list[str]] = {
     "SITE": _f(
         "warehouse,plant,factory,store,shop,branch,depot,site,outlet,point of sale,distribution center,αποθηκ,"
         "εργοστασ,καταστημ,υποκαταστ,κεντρο διανομ,lager,werk,filiale,standort,entrepot,usine,magasin,magazzino,"
-        "stabilimento,negozio,filiale,almacen,fabrica,tienda,sucursal"
+        "stabilimento,negozio,filiale,almacen,fabrica,tienda,sucursal,invent location,inventlocation"
     ),
     "ADDRESS": _f("address,street,addr,διευθυνσ,οδος,adresse,strasse,anschrift,indirizzo,via,direccion,calle"),
     "PROJECT": _f("project,εργο,projekt,projet,progetto,proyecto"),
@@ -73,8 +73,26 @@ NOT_SENSITIVE = _f(
     "city,town,country,region,area,territory,zone,category,group,class,type,status,date,year,month,week,day,"
     "quarter,period,unit,uom,currency,channel,segment,family,season,language,πολη,χωρα,νομος,περιοχ,κατηγορ,"
     "ομαδα,τυπος,κατασταση,ημερομηνια,ετος,μηνας,μοναδα,νομισμα,καναλι,stadt,land,region,kategorie,gruppe,"
-    "ville,pays,categorie,citta,paese,categoria,ciudad,pais"
+    "ville,pays,categorie,citta,paese,categoria,ciudad,pais,format,main account,ledger,gl,chart of accounts,"
+    "cost center,cost centre,profit center,dimension,λογαριασμ,λογιστικ,kostenstelle,sachkonto,"
+    "zip,postal,postcode,τ.κ.,plz"
 )
+# Roles beat geography and classification: "Region Manager" is a person, "Region" is not.
+PERSON_ROLES = _f(
+    "manager,salesperson,sales rep,representative,owner,driver,employee,supervisor,υπευθυν,πωλητ,οδηγο,οδηγου,"
+    "leiter,verkaufer,responsable,responsabile"
+)
+# Table names that mark a master-data table for a bare Name column (Dataverse "accounts", "competitors")
+TABLE_KEYWORDS = {
+    "ORG": _f("accounts,account,competitor,competitors,customers,vendors,suppliers"),
+    "PERSON": _f("contacts,systemusers,leads,employees,workers"),
+}
+# Bare Name/Description columns in these tables describe transactions, not master data
+TRANSACTION_TABLES = _f(
+    "invoice,order,line,lines,trans,journal,posting,entry,entries,ledger,τιμολογ,παραγγελ,κινησ,"
+    "rechnung,auftrag,buchung,facture,commande,fattura,ordine,factura,pedido"
+)
+_NAME_ONLY = _f("name,ονομα,επωνυμια,nom,nome,nombre,bezeichnung")
 NAME_WORDS = _f("name,ονομα,περιγραφη,description,bezeichnung,nom,libelle,nome,descrizione,nombre,descripcion")
 
 LEGAL_FORMS_RE = re.compile(
@@ -177,20 +195,32 @@ def classify_header(column: str, table: str = "") -> tuple[str | None, str, bool
     if not col:
         return None, "", False
     is_code = _has_keyword(col, CODE_WORDS) is not None
-    for category in ("IBAN", "TAX_ID", "EMAIL", "PHONE", "ADDRESS"):
+    for category in ("IBAN", "TAX_ID", "EMAIL", "PHONE"):
         kw = _has_keyword(col, HEADER_KEYWORDS[category])
         if kw:
             return category, kw, False
+    role = _has_keyword(col, PERSON_ROLES)
+    if role and not is_code:
+        return "PERSON", role, False  # "Region Manager", "Store Owner"
     if _has_keyword(col, NOT_SENSITIVE):
-        return None, "", False  # "Customer Group", "Store Type", "Supplier Country": classifications, not names
+        return None, "", False  # "Customer Group", "Store Format", "Address City", "MainAccountName"
+    kw = _has_keyword(col, HEADER_KEYWORDS["ADDRESS"])
+    if kw:
+        return "ADDRESS", kw, False
     for category in ("PERSON", "ORG", "PRODUCT", "SITE", "PROJECT"):
         kw = _has_keyword(col, HEADER_KEYWORDS[category])
         if kw:
             return category, kw, is_code
-    # a bare "Name"/"Description" column takes its meaning from the table: Customers[Name]
-    if _has_keyword(col, NAME_WORDS) or is_code:
+    # a bare "Name" column takes its meaning from the table: Customers[Name], accounts.name.
+    # "Description" only counts in product tables; transaction tables (invoice lines) never count.
+    if _has_keyword(tab, TRANSACTION_TABLES):
+        return None, "", False
+    bare_name = _has_keyword(col, _NAME_ONLY) is not None
+    if bare_name or is_code or _has_keyword(col, NAME_WORDS):
         for category in ("PERSON", "ORG", "PRODUCT", "SITE", "PROJECT"):
-            kw = _has_keyword(tab, HEADER_KEYWORDS[category])
+            if category != "PRODUCT" and not (bare_name or is_code):
+                continue
+            kw = _has_keyword(tab, HEADER_KEYWORDS[category] + TABLE_KEYWORDS.get(category, []))
             if kw:
                 return category, f"{tab}.{col}", is_code
     return None, "", False
@@ -205,7 +235,19 @@ def _looks_like_person(value: str) -> bool:
     folded = [fold(w.strip(".")) for w in words]
     if any(w in _FIRST_NAMES for w in folded):
         return True
-    return is_greek(value) and any(w.endswith(_GREEK_SURNAME_ENDINGS) for w in folded)
+    if not is_greek(value):
+        return False
+    # "Κρουασάν Βουτύρου" ends like a surname but is a product: its words are ordinary Greek.
+    # Greek word-frequency lists are thinner, so a lower bar than for English.
+    return any(f.endswith(_GREEK_SURNAME_ENDINGS) and _zipf_el(w) < 3.0 for w, f in zip(words, folded, strict=False))
+
+
+def _zipf_el(word: str) -> float:
+    try:
+        from wordfreq import zipf_frequency
+    except ImportError:  # pragma: no cover
+        return 0.0
+    return zipf_frequency(word.lower(), "el")
 
 
 def _ratio(values: list[str], test) -> float:
@@ -252,6 +294,9 @@ def classify_column(column: str, values: Iterable[object], table: str = "") -> C
     if header_cat in ("ORG", "PERSON", "PRODUCT", "SITE", "PROJECT"):
         if is_code and codes >= 0.6:
             return ColumnVerdict("ID", 0.85, f"{header_cat.lower()} codes ({kw})")
+        if is_code and _ratio(sample, lambda v: " " not in v and len(v) <= 6) >= 0.6:
+            # "Company code" = ALFA, GR01: too short and generic to swap everywhere
+            return ColumnVerdict(None, 0.0, f"short {header_cat.lower()} codes ({kw}); too generic to protect")
         if header_cat in ("ORG", "PERSON"):
             if legal >= 0.2:
                 return ColumnVerdict("ORG", 0.9, f"column name ({kw}) and company legal forms in the values")
@@ -265,6 +310,14 @@ def classify_column(column: str, values: Iterable[object], table: str = "") -> C
     if person >= 0.6:
         return ColumnVerdict("PERSON", 0.7, "values look like people's names")
     return ColumnVerdict(None, 0.0, "no sign of sensitive data")
+
+
+def _ordinary(word: str) -> bool:
+    from ..detectors.heuristics import is_common_word
+
+    if word.isupper() and len(word) <= 5:
+        return True
+    return is_common_word(word)
 
 
 def extract_terms(category: str, values: Iterable[object], limit: int = 50000) -> tuple[list[str], int]:
@@ -282,7 +335,7 @@ def extract_terms(category: str, values: Iterable[object], limit: int = 50000) -
         if key in seen:
             continue
         seen.add(key)
-        if key in PLACEHOLDERS or len(v) < 3:
+        if key in PLACEHOLDERS or len(v) < (3 if category in ("ID", "PHONE", "TAX_ID", "IBAN") else 4):
             skipped += 1
             continue
         digits = sum(c.isdigit() for c in v)
@@ -299,6 +352,9 @@ def extract_terms(category: str, values: Iterable[object], limit: int = 50000) -
             continue
         elif category == "PERSON" and any(fold(w) in _DEPARTMENTS for w in v.split()):
             skipped += 1  # "Sales Team", "Λογιστήριο": shared mailboxes, not people
+            continue
+        elif category not in ("ADDRESS",) and " " not in v and not any(c.isdigit() for c in v) and _ordinary(v):
+            skipped += 1  # "Discount", "Central", "THE": one ordinary word or a short code would be swapped everywhere
             continue
         elif category == "PRODUCT" and " " not in v and not any(c.isdigit() for c in v):
             # a one-word product ("Croissant", "Butter") is an ordinary word: protecting it

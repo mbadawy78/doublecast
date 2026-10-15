@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -55,12 +56,14 @@ def build_sources(cfg: Config, vault, prompt: Callable[[str], None] | None = Non
         return auth
 
     def api(scopes: list[str], headers: dict | None = None) -> Api:
-        cache: dict[str, str] = {}
+        cache: dict[str, tuple[str, float]] = {}
 
-        def token() -> str:
-            if "t" not in cache:
-                cache["t"] = ms().token(scopes)
-            return cache["t"]
+        def token(fresh: bool = False) -> str:
+            # MSAL refreshes silently; ask it again every 20 minutes so long scans never use an expired token
+            hit = cache.get("t")
+            if fresh or hit is None or time.monotonic() - hit[1] > 1200:
+                cache["t"] = (ms().token(scopes), time.monotonic())
+            return cache["t"][0]
 
         return Api(token, client=client, headers=headers)
 

@@ -68,7 +68,8 @@ Everything you send and receive is then scrambled and restored automatically.
 ## Teaching it the company's data
 
 Names are found automatically (email headers, greetings, titles, signatures, company legal
-forms, capitalised names) and remembered. To protect everything in the company's systems up
+forms, capitalised names); those found from a strong clue are remembered (ordinary words never
+are). To protect everything in the company's systems up
 front, the user can run discovery once (Power BI, Microsoft 365, Dynamics 365, SharePoint,
 SQL, Excel folders):
 

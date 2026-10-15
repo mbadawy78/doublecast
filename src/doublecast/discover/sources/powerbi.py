@@ -121,3 +121,6 @@ class PowerBISource(Source):
         dax = f'EVALUATE TOPN({int(limit)}, DISTINCT(SELECTCOLUMNS({_q(t)}, "v", {_q(t)}{_col(column)})))'
         for row in self._query(base, dax):
             yield next(iter(row.values()), None)
+
+    def close(self) -> None:
+        self.api.close()

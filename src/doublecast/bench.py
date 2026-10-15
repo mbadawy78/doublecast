@@ -319,8 +319,10 @@ def run_benchmark(n: int = 300, seed: int = 7) -> str:
         f"- **Ratio drift from money scaling** (rounding to cents): max {max(ratio_errors, default=0):.2e}, mean {sum(ratio_errors) / max(len(ratio_errors), 1):.2e}",
         f"- **Scramble speed:** {chars / max(scramble_time, 1e-9) / 1024:.0f} KB/s on this machine, starting from an empty vault ({elapsed:.1f}s for the whole benchmark)",
         "",
-        "Unlisted names leak by design when no AI detector is installed: list your people and partners,",
-        "or install the optional detector (`pip install 'doublecast[ner]'`) as a safety net.",
+        "UNLISTED_PERSON uses only a dozen distinct names that are not in any list. Auto mode catches each",
+        "the first time it appears in a greeting, header or after a title, and remembers it, so this row",
+        "mostly measures *remembering*. How well brand-new names are found is measured separately, with",
+        "names that never repeat: see [benchmark-auto.md](benchmark-auto.md).",
     ]
     return "\n".join(lines)
 
@@ -501,7 +503,7 @@ def run_auto_benchmark(n: int = 100, seed: int = 11) -> str:
     lines += [
         "",
         f"**Over-protection** (held-out phrases): {len(swapped)} of {len(phrases)} ordinary capitalised business phrases were swapped "
-        f"too ({', '.join(swapped) or 'none'}). Harmless for privacy, but the AI sees an invented name instead. "
+        f"too ({', '.join(swapped) or 'none'}). No privacy cost, but the AI reads an invented name where an ordinary phrase was, which can confuse its answer. "
         "Set `auto.capitalized_phrases: false` to trade some recall for cleaner text.",
         "",
         "A name that appears for the first time at the start of a sentence is caught when its first name",

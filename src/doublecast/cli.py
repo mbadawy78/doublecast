@@ -430,7 +430,7 @@ def cmd_discover(args) -> int:
             print("Usage: doublecast discover forget SOURCE|learned", file=sys.stderr)
             return 2
         if args.target == "learned":
-            engine.rules.data["learned"] = {}
+            engine.rules.clear_learned()
             ok = True
         else:
             ok = any(

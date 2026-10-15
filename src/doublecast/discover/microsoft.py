@@ -20,6 +20,7 @@ Tokens are cached encrypted with the vault key, so you sign in once.
 from __future__ import annotations
 
 import sys
+import time
 from collections.abc import Callable, Iterator
 
 import httpx
@@ -57,6 +58,7 @@ class MicrosoftAuth:
             client_id, authority=f"https://login.microsoftonline.com/{tenant}", token_cache=self.cache
         )
         self.prompt = prompt or (lambda msg: print(msg, file=sys.stderr, flush=True))
+        self.interactive = lambda: prompt is not None or sys.stdin.isatty()
 
     def _save(self) -> None:
         if self.cache.has_state_changed:
@@ -74,6 +76,9 @@ class MicrosoftAuth:
             if result:
                 break
         if not result:
+            if not self.interactive():
+                # a scheduled run must never sit waiting for a sign-in nobody will see
+                raise SourceError("Microsoft sign-in needed: run `doublecast discover` once in a terminal")
             flow = self.app.initiate_device_flow(scopes=scopes)
             if "user_code" not in flow:
                 raise SourceError(f"Microsoft sign-in could not start: {flow.get('error_description', flow)}")
@@ -86,36 +91,88 @@ class MicrosoftAuth:
 
 
 class Api:
-    """Small JSON client with bearer tokens and OData paging."""
+    """Small JSON client with bearer tokens, OData paging, and polite retries.
 
-    def __init__(self, token: Callable[[], str], client: httpx.Client | None = None, headers: dict | None = None):
+    Throttling (429), server hiccups (5xx) and network timeouts are retried with back-off
+    (honouring Retry-After); an expired token (401) is refreshed once. Anything else becomes
+    a SourceError, so one bad table never stops a scan.
+    """
+
+    RETRIES = 5
+
+    def __init__(
+        self,
+        token: Callable[..., str],
+        client: httpx.Client | None = None,
+        headers: dict | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         self._token = token
+        self._owns_client = client is None
         self.client = client or httpx.Client(timeout=60.0)
         self.headers = headers or {}
+        self._sleep = sleep
 
-    def _h(self) -> dict:
-        return {"Authorization": f"Bearer {self._token()}", "Accept": "application/json", **self.headers}
+    def _h(self, fresh: bool = False) -> dict:
+        try:
+            tok = self._token(fresh=True) if fresh else self._token()
+        except TypeError:  # a plain callable without the `fresh` switch
+            tok = self._token()
+        return {"Authorization": f"Bearer {tok}", "Accept": "application/json", **self.headers}
 
-    def get(self, url: str, params: dict | None = None) -> dict:
-        r = self.client.get(url, params=params, headers=self._h())
+    def _send(self, method: str, url: str, **kw) -> httpx.Response:
+        fresh = False
+        short = url.split("?")[0]
+        for attempt in range(self.RETRIES + 1):
+            try:
+                r = self.client.request(method, url, headers=self._h(fresh), **kw)
+            except httpx.TransportError as exc:  # timeouts, resets, DNS
+                if attempt == self.RETRIES:
+                    raise SourceError(f"{short}: network error ({exc.__class__.__name__})") from exc
+                self._sleep(min(2**attempt, 30))
+                continue
+            if r.status_code == 401 and not fresh:
+                fresh = True  # token expired during a long scan: get a new one and retry once
+                continue
+            if (r.status_code == 429 or r.status_code >= 500) and attempt < self.RETRIES:
+                try:
+                    wait = float(r.headers.get("Retry-After", ""))
+                except ValueError:
+                    wait = float(min(2**attempt, 30))
+                self._sleep(min(max(wait, 0.5), 60))
+                continue
+            return r
+        return r  # pragma: no cover
+
+    def _check(self, r: httpx.Response, url: str) -> dict:
+        short = url.split("?")[0]
         if r.status_code in (401, 403):
-            raise SourceError(f"No permission to read {url.split('?')[0]} (HTTP {r.status_code})")
+            raise SourceError(f"No permission to read {short} (HTTP {r.status_code})")
         if r.status_code == 404:
-            raise SourceError(f"Not found: {url.split('?')[0]}")
-        r.raise_for_status()
-        return r.json()
-
-    def post(self, url: str, body: dict) -> dict:
-        r = self.client.post(url, json=body, headers=self._h())
-        if r.status_code in (401, 403):
-            raise SourceError(f"No permission for {url} (HTTP {r.status_code})")
+            raise SourceError(f"Not found: {short}")
         if r.status_code >= 400:
             try:
                 detail = r.json()
             except Exception:
                 detail = r.text[:300]
-            raise SourceError(f"{url} failed (HTTP {r.status_code}): {detail}")
-        return r.json()
+            raise SourceError(f"{short} failed (HTTP {r.status_code}): {detail}")
+        try:
+            return r.json()
+        except ValueError as exc:
+            raise SourceError(f"{short}: the answer was not JSON") from exc
+
+    def get(self, url: str, params: dict | None = None) -> dict:
+        return self._check(self._send("GET", url, params=params), url)
+
+    def post(self, url: str, body: dict) -> dict:
+        return self._check(self._send("POST", url, json=body), url)
+
+    def download(self, url: str) -> httpx.Response:
+        return self._send("GET", url, follow_redirects=True)
+
+    def close(self) -> None:
+        if self._owns_client:
+            self.client.close()
 
     def pages(self, url: str, params: dict | None = None, limit: int = 100000) -> Iterator[dict]:
         """Yield items across @odata.nextLink pages."""

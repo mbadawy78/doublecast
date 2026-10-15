@@ -19,8 +19,10 @@ Listed = in the term lists or caught by a pattern detector. Unlisted = a person 
 
 - **Round-trip exact restore:** 1653/1653 (100.0%)
 - **Restore after model mangling** (upper-case, possessive, Greek genitive): 3275/3275 (100.0%)
-- **Ratio drift from money scaling** (rounding to cents): max 1.15e-05, mean 1.38e-07
-- **Scramble speed:** 83 KB/s on this machine, starting from an empty vault (13.2s for the whole benchmark)
+- **Ratio drift from money scaling** (rounding to cents): max 1.84e-05, mean 1.07e-07
+- **Scramble speed:** 75 KB/s on this machine, starting from an empty vault (12.7s for the whole benchmark)
 
-Unlisted names leak by design when no AI detector is installed: list your people and partners,
-or install the optional detector (`pip install 'doublecast[ner]'`) as a safety net.
+UNLISTED_PERSON uses only a dozen distinct names that are not in any list. Auto mode catches each
+the first time it appears in a greeting, header or after a title, and remembers it, so this row
+mostly measures *remembering*. How well brand-new names are found is measured separately, with
+names that never repeat: see [benchmark-auto.md](benchmark-auto.md).

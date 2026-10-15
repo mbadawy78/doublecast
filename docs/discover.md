@@ -20,10 +20,26 @@ Lists you type yourself (`terms:`) become optional: use them for a handful of cr
 | Spreadsheet columns | a column headed Customer / Πελάτης / Salesperson / Είδος / Αποθήκη | yes |
 | Capitalised names mid-sentence | `we met Georgia Konstantinou` | no (broad net) |
 | First + last name at a sentence start | `Theodora Vlachaki will confirm` (common first names) | no |
+| Greek article + capitalised word | `μίλησα με τον Παπαδόπουλο` | no |
 
 "Remembered" means the name is caught everywhere afterwards, in any case or Greek inflection,
 even where nothing gives it away. Learned names are stored encrypted in
 `~/.doublecast/<workspace>.rules`.
+
+Because a remembered value is swapped *everywhere*, learning is strict. It never keeps:
+
+- ordinary words in any of the six languages ("Dear Reader", "Thanks, Operations",
+  "Net Weight KG", "Marketing Ltd"), job titles ("Mr President", "Herr Direktor") or
+  department names;
+- lone first names ("Dear Maria" swaps Maria there, but does not learn her);
+- short codes and single ordinary words from spreadsheet cells ("THE", "ALFA", "Discount").
+
+If something was learned that should not have been: `doublecast discover ignore "Value"`, or
+`doublecast discover forget learned` to start over (a running proxy picks this up and does
+not re-add the old names).
+
+Code is not prose: fenced code blocks, inline `code` and shell/import lines are not searched
+for names (secrets and keys in them are still redacted).
 
 The broad net leaves ordinary vocabulary alone ("Annual Leave Policy", "Πρόγραμμα
 Εκπαίδευσης") using offline word-frequency lists for all six languages. Turn the net off with
@@ -56,10 +72,13 @@ doublecast discover forget SOURCE|learned         # drop a source's rules, or ev
 4. For sensitive columns, reads the distinct values and turns them into rules.
 5. Shows you the result (examples masked) and asks before saving.
 
-It deliberately does **not** protect geography (City, Country, Region), classifications
-(Customer Group, Store Type, Category), dates or amounts (amounts are covered by money
-scaling), placeholder values ("Total", "Λοιποί", "N/A"), or single ordinary words from product
-lists ("Croissant"), which would otherwise be swapped everywhere.
+Columns it deliberately does **not** turn into rules: geography fields (City, Country,
+Region, postcode, also inside an address such as `AddressCity`), classifications (Customer
+Group, Store Type, Store Format, Category), general-ledger accounts and cost centres
+(`MainAccountName`), descriptions on invoice and order lines, short codes without digits
+(company code `ALFA`), dates and amounts (amounts are covered by money scaling), placeholder
+values ("Total", "Λοιποί", "N/A"), and single ordinary words ("Croissant", "Discount"), which
+would otherwise be swapped everywhere. Street addresses *are* protected.
 
 ### Sources
 
@@ -150,8 +169,14 @@ doublecast discover --yes --quiet
 - **macOS / Linux** (cron, every night at 02:00): `0 2 * * * /path/to/doublecast discover --yes --quiet`
 - **Windows** (Task Scheduler): a daily task running `doublecast discover --yes --quiet`
 
-Microsoft sources need one interactive sign-in first; after that the cached token is reused
-until it expires (then the scheduled run reports that a sign-in is needed).
+Microsoft sources need one interactive sign-in first; after that the cached token is
+refreshed silently. If Microsoft ever asks for a fresh sign-in (password change, policy, about
+90 days of inactivity; this varies by tenant), a scheduled run does not wait for it: it skips
+that source, reports "Microsoft sign-in needed", and keeps the rules it already had. Run
+`doublecast discover` once in a terminal to sign in again.
+
+Long scans are throttle-safe: HTTP 429 and 5xx answers and network timeouts are retried with
+back-off (honouring `Retry-After`), and tokens are renewed during the scan.
 
 ### Privacy of discovery itself
 

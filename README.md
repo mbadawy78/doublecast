@@ -57,8 +57,11 @@ That's it: no lists required. Doublecast protects names three ways, from least t
 1. **Auto mode (on by default).** Names are found from the structure of business text: email
    headers, greetings ("Dear Petros", «Αγαπητέ κ. Ανδρέου»), titles, sign-offs, company legal
    forms ("… S.A.", "… ΑΕ", "… GmbH"), spreadsheet columns headed Customer / Πελάτης / Salesperson
-   / Είδος, and capitalised names mid-sentence. Every name found is **remembered**, so it is
-   caught everywhere afterwards, in any case or Greek inflection.
+   / Είδος, and capitalised names mid-sentence. Names found from a strong clue (header,
+   greeting, title, sign-off, legal form, column) are **remembered**, so they are caught
+   everywhere afterwards, in any case or Greek inflection. Ordinary words are never
+   remembered ("Dear Reader" teaches nothing), and neither are lone first names or finds of
+   the broad capitalised-name net: those are swapped where they appear, not learned.
 2. **Discovery.** Point Doublecast at your systems once and it learns every customer, supplier,
    product, employee and site they contain, refreshed nightly:
    ```bash
@@ -170,7 +173,7 @@ Greek nouns change form with grammatical case, and English-first tools miss it. 
 | Exact round-trip `restore(scramble(x)) == x` | **100%** |
 | Restore after the model upper-cases, adds possessives, or puts a Greek name in the genitive | **100%** |
 | Ratio drift from money scaling | < 0.001% |
-| **Names nobody listed**, in that same corpus (caught by auto mode alone) | **0 of 543** |
+| Names nobody listed, in that same corpus (a dozen names, each learned from its first greeting or header) | 0 of 543 |
 
 **Auto mode with no lists at all** (`doublecast bench --auto`, 600 synthetic emails, every name new, [report](docs/benchmark-auto.md)):
 
@@ -182,6 +185,7 @@ Greek nouns change form with grammatical case, and English-first tools miss it. 
 | New name at a sentence start, common first name | **0%** |
 | New name at a sentence start, **uncommon first name** | **100%**: the gap that discovery or a list closes |
 | Ordinary capitalised phrases swapped by mistake | 1 of 10 ("Purchase Requisition") |
+| Ordinary words learned as names (about 25 regression cases: "Dear Reader", "Mr President", "Dear Subscriber", "Net Weight KG", "Ihr Vertriebsteam"...) | 0 |
 
 The vocabulary threshold was tuned while looking at those 10 phrases, so treat that row as indicative. Real-world over-protection reports are welcome.
 
@@ -191,7 +195,8 @@ The vocabulary threshold was tuned while looking at those 10 phrases, so treat t
 
 - **It is not anonymisation.** Context can still identify a company ("the largest olive-oil exporter on Crete"). A [2026 study](https://www.alphaxiv.org/abs/2605.30848) found web-search agents re-identified roughly half to three-quarters of Presidio-redacted transcripts from context alone. Doublecast reduces exposure; it does not make you anonymous.
 - **Not every unknown name is caught.** Auto mode needs a clue: structure, a capital letter mid-sentence, or a common first name. A name seen for the first time at the start of a sentence with an uncommon first name, or written in lower case, passes through. Discovery covers every name in your systems; the optional local AI detector (`pip install "doublecast[ner]"`) adds a safety net. `doublecast scan` shows exactly what will change.
-- **Auto mode over-protects a little.** A capitalised phrase that isn't everyday vocabulary may be swapped even when it isn't a name (an internal product line, a team nickname). That is harmless for privacy; turn it off with `auto.capitalized_phrases: false`.
+- **Auto mode over-protects a little.** A capitalised phrase that isn't everyday vocabulary may be swapped even when it isn't a name (an internal product line, a team nickname). That costs no privacy, but the AI then reads an invented name where an ordinary phrase was, which can confuse its answer; turn the net off with `auto.capitalized_phrases: false`. Code blocks, inline code and shell lines are left alone (secrets in them are still redacted).
+- **A double can meet a real name.** Doublecast never picks a double that appears anywhere in the text being sent, and a real person who shares a name with an earlier double gets a double of their own. That check needs the name written as the double was (capitalised, same form); a real namesake in another Greek case or in lower case can still be restored as the wrong person. Lists or discovery prevent it.
 - **Doubles can be swapped twice.** If text that already contains doubles is scrambled again (for example a scrambled file read through the proxy), names may be doubled again. Restoring then returns the first double, not the real name. Emails, IBANs and IDs are never doubled twice.
 - **Only what you listed, in the forms you listed.** `Nordia Hellas` is caught in any case, accent or Greek inflection, but `Nordia-Hellas`, `NordiaHellas`, the bare brand `Nordia`, or `Larissa` on its own (when you listed `Larissa Plant`) are not. Add those as aliases or separate terms.
 - **Images and binary PDFs inside API requests** can't be rewritten; the proxy logs a warning when they pass through. Scramble files with `doublecast scramble` first.

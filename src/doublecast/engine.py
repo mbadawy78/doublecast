@@ -13,11 +13,11 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from .config import Config, load_config
+from .config import Config, Term, load_config
 from .data.names import RECOGNISED_FIRST_NAMES
 from .detectors.base import Span, resolve_overlaps
 from .detectors.dictionary import DictionaryDetector
-from .detectors.heuristics import detect_structure
+from .detectors.heuristics import detect_structure, is_common_word, learnable
 from .detectors.ner import NerDetector
 from .detectors.patterns import CORE_PATTERNS, detect_ibans, detect_patterns, load_pack, load_pack_meta
 from .detectors.secrets import detect_secrets
@@ -125,6 +125,7 @@ _COMMON_CAPS = {
 
 
 _FIRST_NAME_KEYS = {fold(n) for n in RECOGNISED_FIRST_NAMES}
+_CAP_RUN = re.compile(r"(?<![\w'’\-])[^\W\d_][\w'’\-]*(?:[ \t]+[^\W\d_][\w'’\-]*){0,3}")
 
 
 def _word_root(folded_word: str) -> str:
@@ -174,6 +175,12 @@ class Engine:
         self.factory = SurrogateFactory(self.vault.seed(), self.config.default_language, self.config.languages)
         self.rules = RulesStore(self.config.rules_path, self.vault)
         self._rules_dirty = False
+        self._context: set[str] = set()
+        self._recent_terms: list = []
+        self._just_learned: list[tuple[str, str]] = []
+        self._homonym_keys: dict[str, str] = {}
+        self._homonym_count = 0
+        self.recent_dictionary: DictionaryDetector | None = None
         self.terms = self._all_terms()
         self.dictionary = DictionaryDetector(self.terms, self.config.allow)
         self.pattern_specs = list(CORE_PATTERNS)
@@ -224,12 +231,35 @@ class Engine:
         self._term_values = {fold(t.value) for t in self.terms} | {fold(a) for t in self.terms for a in t.aliases}
 
     def reload_rules(self) -> None:
-        """Pick up newly discovered or learned terms."""
+        """Pick up newly discovered or learned terms (full rebuild)."""
         self.terms = self._all_terms()
         self.dictionary = DictionaryDetector(self.terms, self.config.allow)
+        self._recent_terms = []
+        self._just_learned = []
+        self.recent_dictionary = None
         self._index_terms()
         self._cache.clear()
         self._rules_dirty = False
+
+    def _add_learned_terms(self) -> None:
+        """Names learned a moment ago go into a small second matcher, so a big rule set is not
+        recompiled after every email (that took seconds with tens of thousands of terms)."""
+        new = [Term(c, v) for c, v in self._just_learned if fold(v) not in self._term_values]
+        self._just_learned = []
+        self._rules_dirty = False
+        if not new:
+            return
+        if len(self._recent_terms) + len(new) > 300:
+            self.reload_rules()
+            return
+        self._recent_terms += new
+        self.terms = self.terms + new
+        self.recent_dictionary = DictionaryDetector(self._recent_terms, self.config.allow)
+        for t in new:
+            for v in (t.value, *t.aliases):
+                self._term_values.add(fold(v))
+                self._term_roots.update(_word_root(w) for w in fold(v).split() if len(w) >= 4)
+        self._cache.clear()
 
     def _learn(self, spans: list[Span]) -> None:
         if not self.config.auto_learn:
@@ -237,18 +267,29 @@ class Engine:
         changed = False
         for s in spans:
             if s.detector == "heuristic" and s.meta.get("strong") and s.category in ("PERSON", "ORG"):
-                changed |= self.rules.learn(s.category, s.text)
+                # only what cannot be ordinary language is remembered ("Dear Reader" teaches nothing)
                 if s.kind == "legal_form":
-                    # also learn "Nordia Hellas" on its own, with the matching part of the double
                     core, _ = split_legal_form(s.text)
+                    if not core or not learnable("ORG", core):
+                        continue  # "Marketing Ltd", "Net Weight KG"
+                    changed |= self._remember("ORG", s.text)
+                    # also learn "Nordia Hellas" on its own, with the matching part of the double
                     full_double = self.vault.get(s.text)
-                    if core and len(core) >= 4 and full_double:
+                    if len(core) >= 4 and full_double and (len(core.split()) > 1 or not core.isupper()):
                         core_double, _ = split_legal_form(full_double)
                         self.vault.try_put("ORG", core, core_double)
-                        changed |= self.rules.learn("ORG", core)
+                        changed |= self._remember("ORG", core)
+                elif learnable(s.category, s.text, s.kind):
+                    changed |= self._remember(s.category, s.text)
         if changed:
             self.rules.save()
             self._rules_dirty = True
+
+    def _remember(self, category: str, value: str) -> bool:
+        if self.rules.learn(category, value):
+            self._just_learned.append((category, value.strip()))
+            return True
+        return False
 
     def learn_value(self, category: str, value: str) -> None:
         """Remember a value found through a spreadsheet column (saved by flush_learned)."""
@@ -258,7 +299,7 @@ class Engine:
 
         terms, _ = extract_terms(category, [value])
         for t in terms:
-            if self.rules.learn(category, t):
+            if category in ("PHONE", "TAX_ID", "IBAN", "ID") or learnable(category, t):
                 self._pending_learn = True
 
     def flush_learned(self) -> None:
@@ -294,10 +335,12 @@ class Engine:
         spans += detect_patterns(text, self.pattern_specs, self.config.languages)
         if self.rules.changed_on_disk():  # e.g. a scheduled discover ran while the proxy is up
             self.rules.reload()
-            self._rules_dirty = True
-        if self._rules_dirty:
             self.reload_rules()
+        if self._rules_dirty:
+            self._add_learned_terms()
         spans += self.dictionary.detect(text)
+        if self.recent_dictionary is not None:
+            spans += self.recent_dictionary.detect(text)
         if self.config.structure_detection:
             spans += detect_structure(text, self.config.capitalized_phrases)
         if self.ner:
@@ -316,10 +359,91 @@ class Engine:
             if s.action == "replace" and s.detector in ("pattern", "pack", "secret") and fold(s.text).strip() in keys
         ]
         protected += [m.span() for m in REDACTED_RE.finditer(text)]
+        spans += self._same_text_mentions(text, spans)
+        spans += self._homonyms(text, spans)
         if protected:
             guard = _Guard(protected)
             spans = [s for s in spans if not guard.hits(s.start, s.end)]
         return resolve_overlaps(spans)
+
+    def _same_text_mentions(self, text: str, spans: list[Span]) -> list[Span]:
+        """ "Dear Mr Spyros Pappas, ... please call Pappas": once a strong clue names someone, every
+        other mention in the same text is swapped too, not only from the next text on."""
+        names: dict[str, str] = {}
+        for s in spans:
+            if s.detector != "heuristic" or not s.meta.get("strong") or s.category not in ("PERSON", "ORG"):
+                continue
+            names.setdefault(s.text, s.category)
+            words = s.text.split()
+            if s.category == "PERSON" and len(words) >= 2 and learnable("PERSON", words[-1], "title"):
+                names.setdefault(words[-1], "PERSON")
+            if s.kind == "legal_form":
+                core, _ = split_legal_form(s.text)
+                if core and learnable("ORG", core):
+                    names.setdefault(core, "ORG")
+        if not names:
+            return []
+        taken = [(s.start, s.end) for s in spans]
+        out: list[Span] = []
+        for name, cat in sorted(names.items(), key=lambda kv: -len(kv[0])):
+            for m in re.finditer(rf"(?<![\w'’\-]){re.escape(name)}(?![\w\-])", text, re.IGNORECASE):
+                if any(a < m.end() and m.start() < b for a, b in taken):
+                    continue
+                taken.append(m.span())
+                out.append(
+                    Span(
+                        m.start(),
+                        m.end(),
+                        cat,
+                        m.group(0),
+                        "heuristic",
+                        kind="same_text",
+                        confidence=0.8,
+                        meta={"strong": False, "canonical": name},
+                    )
+                )
+        return out
+
+    def _homonyms(self, text: str, spans: list[Span]) -> list[Span]:
+        """A real person who shares a name with a double used earlier ("Dimitriou") gets a double
+        of their own; otherwise restoring the answer would turn them into someone else."""
+        if self._homonym_count != len(self.vault.mappings()):
+            for m in self.vault.mappings()[self._homonym_count :]:
+                if m.category in ("PERSON", "PERSON_PART", "ORG"):
+                    key = fold(m.surrogate)
+                    self._homonym_keys[key] = "ORG" if m.category == "ORG" else "PERSON"
+            self._homonym_count = len(self.vault.mappings())
+        if not self._homonym_keys:
+            return []
+        taken = [(s.start, s.end) for s in spans]
+        out: list[Span] = []
+        for m in _CAP_RUN.finditer(text):
+            words = list(re.finditer(r"\S+", m.group(0)))
+            # longest run of words first: "Daniel Kelgate" before "Kelgate"
+            found = False
+            for i in range(len(words)):
+                for j in range(len(words), i, -1):
+                    a, b = m.start() + words[i].start(), m.start() + words[j - 1].end()
+                    cat = self._homonym_keys.get(fold(text[a:b])) if text[a].isupper() else None
+                    if cat and not any(x < b and a < y for x, y in taken):
+                        out.append(
+                            Span(
+                                a,
+                                b,
+                                cat,
+                                text[a:b],
+                                "heuristic",
+                                kind="homonym",
+                                confidence=0.7,
+                                meta={"strong": False},
+                            )
+                        )
+                        taken.append((a, b))
+                        found = True
+                        break
+                if found:
+                    break
+        return out
 
     # ------------------------------------------------------------ stand-ins
     def stand_in(self, category: str, original: str) -> str:
@@ -332,6 +456,15 @@ class Engine:
             if key == fold(original) or key in self._term_values or self.vault.surrogate_taken(candidate):
                 continue
             own = {_word_root(w) for w in fold(original).split()}  # shared words like "Project", "Plant" are fine
+            if self._context and any(
+                w not in own and (w in self._context or _word_root(w) in self._context)
+                for w in key.split()
+                if len(w) >= 3
+            ):
+                continue  # "Maria" must not stand in for Eleni in a text that also mentions a real Maria
+            own_words = [w for w in fold(original).split() if len(w) >= 4]
+            if any(ow in w and ow != w for ow in own_words for w in key.split()):
+                continue  # "Falcon" must not become "Falconer"
             if any(
                 (r := _word_root(w)) in self._term_roots and r not in own and w not in _FIRST_NAME_KEYS
                 for w in key.split()
@@ -366,6 +499,8 @@ class Engine:
             return [], [], []
         self._default_decimal = guess_decimal_char(text)
         spans = self.detect(text)
+        words = set(re.findall(r"\w{3,}", fold(text)))
+        self._context = words | {_word_root(w) for w in words if is_greek(w)}
         replacements: list[tuple[int, int, str]] = []
         log_rows: list[tuple[str, str, str]] = []
         kept: list[Span] = []
@@ -391,6 +526,7 @@ class Engine:
             replacements.append((span.start, span.end, new))
             log_rows.append((span.category, span.text, new))
             kept.append(span)
+        self._context = set()
         self._learn(kept)
         return replacements, kept, log_rows
 
@@ -438,7 +574,11 @@ class Engine:
             if len(mappings) < self._known_words_count:  # vault was wiped or edited
                 self._known_words, self._known_words_count = set(), 0
             for m in mappings[self._known_words_count :]:
-                self._known_words.update(w.strip(".,") for w in fold(m.surrogate).split())
+                for w in fold(m.surrogate).split():
+                    w = w.strip(".,")
+                    self._known_words.add(w)
+                    if is_greek(w):
+                        self._known_words.add(_word_root(w))
             self._known_words_count = len(mappings)
             self._known_words_version = self.vault.version
         known_words = self._known_words
@@ -458,6 +598,10 @@ class Engine:
                 continue
             if all(w.strip(".,") in _COMMON_CAPS or w.strip(".,") in known_words for w in words):
                 continue
+            if any(_word_root(w.strip(".,")) in known_words for w in words if is_greek(w)):
+                continue  # an inflected double ("Ηλιόπουλο") is ours
+            if all(is_common_word(w) for w in raw_words):
+                continue  # vocabulary, not a name
             hints.append(phrase)
         unique = sorted(set(hints))[:20]
         if unique:

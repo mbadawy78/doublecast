@@ -88,3 +88,6 @@ class ODataSource(Source):
             params["$top"] = "10000"
         for row in self.api.pages(url, params, limit=limit):
             yield row.get(column)
+
+    def close(self) -> None:
+        self.api.close()

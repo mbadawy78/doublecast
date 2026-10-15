@@ -36,13 +36,24 @@ class RulesStore:
         self.path = Path(path)
         self.vault = vault
         self.data: dict = {"sources": {}, "learned": {}, "ignored": []}
-        self._mtime = 0.0
+        self._stamp: tuple = ()
+        # what this process changed since it last read the file; on save these are replayed
+        # onto the newest copy on disk, so another process's "forget" is not undone
+        self._learned_delta: list[tuple[str, str]] = []
+        self._ignored_delta: list[str] = []
+        self._sources_set: dict = {}
+        self._sources_removed: set[str] = set()
+        self._learned_cleared = False
         if self.path.exists():
             self.data = self._read()
         self.version = 0
 
+    def _file_stamp(self) -> tuple:
+        st = self.path.stat()
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
+
     def _read(self) -> dict:
-        self._mtime = self.path.stat().st_mtime
+        self._stamp = self._file_stamp()
         data = json.loads(self.vault.decrypt(self.path.read_bytes()).decode("utf-8"))
         data.setdefault("sources", {})
         data.setdefault("learned", {})
@@ -52,47 +63,64 @@ class RulesStore:
     def changed_on_disk(self) -> bool:
         """True when another process (a scheduled discover, the CLI) saved newer rules."""
         try:
-            return self.path.stat().st_mtime != self._mtime
+            return self._file_stamp() != self._stamp
         except FileNotFoundError:
             return False
 
     def reload(self) -> None:
-        if self.path.exists():
+        """Take the newest copy on disk, keeping this process's unsaved changes."""
+        if not self.path.exists():
+            return
+        if self._learned_delta or self._ignored_delta or self._sources_set or self._sources_removed:
+            self.save()  # replays the changes onto the disk copy
+        else:
             self.data = self._read()
 
     # ------------------------------------------------------------ persistence
     def save(self, replace_sources: bool = False) -> None:
-        """Write the rules. Names learned by other processes meanwhile are kept (merged)."""
+        """Write the rules. Changes other processes saved meanwhile are kept: this process's own
+        changes are replayed onto the newest copy on disk (a "forget" elsewhere stays forgotten)."""
         if self.changed_on_disk():
             disk = self._read()
-            for cat, values in disk.get("learned", {}).items():
-                mine = self.data["learned"].setdefault(cat, [])
-                mine.extend(v for v in values if v not in mine)
-            for v in disk.get("ignored", []):
-                if v not in self.data["ignored"]:
-                    self.data["ignored"].append(v)
-            if not replace_sources:
-                for name, info in disk.get("sources", {}).items():
-                    self.data["sources"].setdefault(name, info)
+            if self._learned_cleared:
+                disk["learned"] = {}
+            for cat, v in self._learned_delta:
+                bucket = disk["learned"].setdefault(cat, [])
+                if v not in bucket:
+                    bucket.append(v)
+            for v in self._ignored_delta:
+                if v not in disk["ignored"]:
+                    disk["ignored"].append(v)
+            if replace_sources:
+                disk["sources"] = dict(self.data["sources"])
+            else:
+                for name in self._sources_removed:
+                    disk["sources"].pop(name, None)
+                disk["sources"].update(self._sources_set)
+            self.data = disk
         self.path.parent.mkdir(parents=True, exist_ok=True)
         blob = self.vault.encrypt(json.dumps(self.data, ensure_ascii=False).encode("utf-8"))
-        tmp = self.path.with_suffix(".tmp")
+        tmp = self.path.with_suffix(f".tmp{os.getpid()}")
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as fh:
             fh.write(blob)
         os.replace(tmp, self.path)
-        self._mtime = self.path.stat().st_mtime
+        self._stamp = self._file_stamp()
+        self._learned_delta, self._ignored_delta = [], []
+        self._sources_set, self._sources_removed, self._learned_cleared = {}, set(), False
         self.version += 1
 
     # ------------------------------------------------------------ sources
     def set_source(self, name: str, columns: list[dict], terms: dict[str, list[str]]) -> None:
-        self.data["sources"][name] = {
+        self.data["sources"][name] = self._sources_set[name] = {
             "refreshed": dt.datetime.now().replace(microsecond=0).isoformat(),
             "columns": columns,
             "terms": {cat: sorted(set(vals)) for cat, vals in terms.items() if vals},
         }
 
     def remove_source(self, name: str) -> bool:
+        self._sources_removed.add(name)
+        self._sources_set.pop(name, None)
         return self.data["sources"].pop(name, None) is not None
 
     def sources(self) -> dict:
@@ -107,11 +135,18 @@ class RulesStore:
         if value in bucket:
             return False
         bucket.append(value)
+        self._learned_delta.append((category, value))
         return True
+
+    def clear_learned(self) -> None:
+        self.data["learned"] = {}
+        self._learned_delta = []
+        self._learned_cleared = True
 
     def ignore(self, value: str) -> None:
         if fold(value) not in self._ignored():
             self.data["ignored"].append(value)
+            self._ignored_delta.append(value)
 
     def _ignored(self) -> set[str]:
         return {fold(v) for v in self.data.get("ignored", [])}
