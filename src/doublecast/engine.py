@@ -14,15 +14,18 @@ import re
 from dataclasses import dataclass, field
 
 from .config import Config, load_config
+from .data.names import RECOGNISED_FIRST_NAMES
 from .detectors.base import Span, resolve_overlaps
 from .detectors.dictionary import DictionaryDetector
+from .detectors.heuristics import detect_structure
 from .detectors.ner import NerDetector
 from .detectors.patterns import CORE_PATTERNS, detect_ibans, detect_patterns, load_pack, load_pack_meta
 from .detectors.secrets import detect_secrets
+from .discover.rules import RulesStore
 from .numbers import NumberTransformer, guess_decimal_char
 from .restore import Restorer, StreamRestorer, apply
-from .surrogates import SurrogateFactory, match_case
-from .textnorm import fold, greek_stem, inflect_words
+from .surrogates import SurrogateFactory, match_case, split_legal_form
+from .textnorm import fold, greek_stem, inflect_words, is_greek, word_endings
 from .vault import Vault
 
 log = logging.getLogger("doublecast")
@@ -121,6 +124,9 @@ _COMMON_CAPS = {
 }
 
 
+_FIRST_NAME_KEYS = {fold(n) for n in RECOGNISED_FIRST_NAMES}
+
+
 def _word_root(folded_word: str) -> str:
     stem = greek_stem(folded_word)
     return stem or folded_word
@@ -166,7 +172,10 @@ class Engine:
         self.config = config or load_config()
         self.vault = vault or Vault(self.config.vault_path, self.config.key_path)
         self.factory = SurrogateFactory(self.vault.seed(), self.config.default_language, self.config.languages)
-        self.dictionary = DictionaryDetector(self.config.terms, self.config.allow)
+        self.rules = RulesStore(self.config.rules_path, self.vault)
+        self._rules_dirty = False
+        self.terms = self._all_terms()
+        self.dictionary = DictionaryDetector(self.terms, self.config.allow)
         self.pattern_specs = list(CORE_PATTERNS)
         self.money_headers: set[str] = set()
         self.quantity_headers: set[str] = set()
@@ -185,16 +194,7 @@ class Engine:
             locale=self.config.number_locale,
         )
         self.allow = {fold(a).strip() for a in self.config.allow}
-        self._term_roots = {
-            _word_root(w)
-            for t in self.config.terms
-            for v in (t.value, *t.aliases)
-            for w in fold(v).split()
-            if len(w) >= 4
-        }
-        self._term_values = {fold(t.value) for t in self.config.terms} | {
-            fold(a) for t in self.config.terms for a in t.aliases
-        }
+        self._index_terms()
         self.ner: NerDetector | None = None
         if self.config.ner_enabled in ("auto", "on"):
             self.ner = NerDetector(self.config.ner_model, self.config.ner_labels, self.config.ner_threshold)
@@ -210,6 +210,62 @@ class Engine:
         self._restorer: Restorer | None = None
         self._restorer_version = -1
         self._default_decimal = "."
+
+    # ------------------------------------------------------------ terms: config + discovered + learned
+    def _all_terms(self) -> list:
+        seen = {fold(t.value) for t in self.config.terms}
+        extra = [t for t in self.rules.terms() if fold(t.value) not in seen]
+        return list(self.config.terms) + extra
+
+    def _index_terms(self) -> None:
+        self._term_roots = {
+            _word_root(w) for t in self.terms for v in (t.value, *t.aliases) for w in fold(v).split() if len(w) >= 4
+        }
+        self._term_values = {fold(t.value) for t in self.terms} | {fold(a) for t in self.terms for a in t.aliases}
+
+    def reload_rules(self) -> None:
+        """Pick up newly discovered or learned terms."""
+        self.terms = self._all_terms()
+        self.dictionary = DictionaryDetector(self.terms, self.config.allow)
+        self._index_terms()
+        self._cache.clear()
+        self._rules_dirty = False
+
+    def _learn(self, spans: list[Span]) -> None:
+        if not self.config.auto_learn:
+            return
+        changed = False
+        for s in spans:
+            if s.detector == "heuristic" and s.meta.get("strong") and s.category in ("PERSON", "ORG"):
+                changed |= self.rules.learn(s.category, s.text)
+                if s.kind == "legal_form":
+                    # also learn "Nordia Hellas" on its own, with the matching part of the double
+                    core, _ = split_legal_form(s.text)
+                    full_double = self.vault.get(s.text)
+                    if core and len(core) >= 4 and full_double:
+                        core_double, _ = split_legal_form(full_double)
+                        self.vault.try_put("ORG", core, core_double)
+                        changed |= self.rules.learn("ORG", core)
+        if changed:
+            self.rules.save()
+            self._rules_dirty = True
+
+    def learn_value(self, category: str, value: str) -> None:
+        """Remember a value found through a spreadsheet column (saved by flush_learned)."""
+        if not self.config.auto_learn:
+            return
+        from .discover.profiler import extract_terms
+
+        terms, _ = extract_terms(category, [value])
+        for t in terms:
+            if self.rules.learn(category, t):
+                self._pending_learn = True
+
+    def flush_learned(self) -> None:
+        if getattr(self, "_pending_learn", False):
+            self.rules.save()
+            self._rules_dirty = True
+            self._pending_learn = False
 
     # ------------------------------------------------------------ restorer cache
     @property
@@ -236,7 +292,14 @@ class Engine:
         spans += secrets
         spans += ibans
         spans += detect_patterns(text, self.pattern_specs, self.config.languages)
+        if self.rules.changed_on_disk():  # e.g. a scheduled discover ran while the proxy is up
+            self.rules.reload()
+            self._rules_dirty = True
+        if self._rules_dirty:
+            self.reload_rules()
         spans += self.dictionary.detect(text)
+        if self.config.structure_detection:
+            spans += detect_structure(text, self.config.capitalized_phrases)
         if self.ner:
             spans += self.ner.detect(text)
         spans += self.numbers.detect(text)
@@ -244,7 +307,14 @@ class Engine:
         spans = [s for s in spans if fold(s.text).strip() not in self.allow]
         # never re-scramble a stand-in (stand-ins can come back in chat history),
         # nor any shorter detection inside one
-        protected = [(s.start, s.end) for s in spans if s.action == "replace" and fold(s.text).strip() in keys]
+        # Structured values (emails, IBANs, IDs) that are already doubles are left alone, so text
+        # that went through Doublecast once is not scrambled twice. Names are different: a real
+        # person can share a name with a double used elsewhere, and leaking them is worse.
+        protected = [
+            (s.start, s.end)
+            for s in spans
+            if s.action == "replace" and s.detector in ("pattern", "pack", "secret") and fold(s.text).strip() in keys
+        ]
         protected += [m.span() for m in REDACTED_RE.finditer(text)]
         if protected:
             guard = _Guard(protected)
@@ -262,13 +332,23 @@ class Engine:
             if key == fold(original) or key in self._term_values or self.vault.surrogate_taken(candidate):
                 continue
             own = {_word_root(w) for w in fold(original).split()}  # shared words like "Project", "Plant" are fine
-            if any((r := _word_root(w)) in self._term_roots and r not in own for w in key.split() if len(w) >= 4):
+            if any(
+                (r := _word_root(w)) in self._term_roots and r not in own and w not in _FIRST_NAME_KEYS
+                for w in key.split()
+                if len(w) >= 4
+            ):
                 continue  # a double must never look like (an inflection of) another real listed name
             stored = self.vault.put(category, original, candidate)
             if category == "PERSON":
                 self._register_surname(original, stored)
             return stored
-        raise RuntimeError(f"Could not find a unique stand-in for a {category} value")
+        # extremely crowded vaults: fall back to a neutral, unique code
+        n = len(self.vault.mappings()) + 1
+        while True:
+            fallback = f"{category.title()} {n:05d}"
+            if not self.vault.surrogate_taken(fallback):
+                return self.vault.put(category, original, fallback)
+            n += 1
 
     def _register_surname(self, original: str, surrogate: str) -> None:
         o_words, s_words = original.split(), surrogate.split()
@@ -303,12 +383,15 @@ class Engine:
                 canonical = span.meta.get("canonical", span.text)
                 new = self.stand_in(span.category, canonical)
                 endings = span.meta.get("endings")
+                if not endings and span.detector == "heuristic" and is_greek(span.text):
+                    endings = word_endings(fold(span.text))  # "κ. Σταματόπουλο" -> "κ. Ηλιόπουλο"
                 if endings:
                     new = inflect_words(new, endings)  # keep Greek grammar: της Καρανίκα -> της Σολίκα
                 new = match_case(span.text, new)  # "ΝΟΡΔΙΑ" in, "ΒΕΡΦΙΛΝΤ" out
             replacements.append((span.start, span.end, new))
             log_rows.append((span.category, span.text, new))
             kept.append(span)
+        self._learn(kept)
         return replacements, kept, log_rows
 
     def scramble(self, text: str) -> ScrambleResult:

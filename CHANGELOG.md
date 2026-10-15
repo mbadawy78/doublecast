@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0 (2026-10-15)
+
+No lists needed.
+
+- **Auto mode:** finds names from the structure of business text (email headers, greetings, titles,
+  sign-offs, company legal forms, capitalised names, first + last names at sentence starts) in six
+  languages, keeps Greek grammatical case, and remembers every name it finds (encrypted rules).
+- **Column understanding:** spreadsheet columns headed Customer / Πελάτης / Salesperson / Είδος /
+  Αποθήκη / ΑΦΜ... are swapped cell by cell; codes and IDs too.
+- **Discovery:** `doublecast discover` learns what is sensitive from Excel/CSV folders, SQL databases,
+  Microsoft 365 (Outlook contacts, mail correspondents, SharePoint lists and files), Power BI,
+  Dynamics 365 F&O, Dataverse and Business Central. Read-only, local, encrypted, reviewable,
+  schedulable.
+- **Claude skill** in `integrations/claude-skill/doublecast`.
+- Unlimited realistic surnames for doubles; vocabulary-aware broad net (offline word frequencies).
+- Names that look like doubles are no longer skipped (a real person can share a double's name).
+- New benchmark: `doublecast bench --auto`.
+
 ## 0.1.0 (2026-10-15)
 
 First public release.

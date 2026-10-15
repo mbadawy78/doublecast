@@ -47,7 +47,7 @@ def guess_language(value: str, default: str, allowed: list[str]) -> str:
     return default if default in N.FIRST_NAMES else "en"
 
 
-def _split_legal_form(value: str) -> tuple[str, str]:
+def split_legal_form(value: str) -> tuple[str, str]:
     stripped = value.strip()
     for form in sorted(N.LEGAL_FORMS, key=len, reverse=True):
         pattern = r"[\s,]+" + re.escape(form) + r"$"
@@ -55,6 +55,9 @@ def _split_legal_form(value: str) -> tuple[str, str]:
         if m:
             return stripped[: m.start()], stripped[m.start() :]
     return stripped, ""
+
+
+_ALL_FIRST_NAMES = {fold(n) for n in N.RECOGNISED_FIRST_NAMES}
 
 
 def _ending(word: str) -> str:
@@ -107,6 +110,7 @@ class SurrogateFactory:
     def make(self, category: str, original: str, attempt: int = 0) -> str:
         folded = fold(original)
         rng = _rng(self.seed, category, folded, attempt)
+        self._attempt = attempt
         maker = getattr(self, f"_make_{category.lower()}", None)
         value = maker(original, rng) if maker else self._make_custom(original, rng)
         if attempt >= 12 and category in ("ORG", "SITE", "PRODUCT", "PROJECT", "CUSTOM"):
@@ -119,11 +123,17 @@ class SurrogateFactory:
         lang = guess_language(original, self.default_language, self.languages)
         parts = original.split()
         firsts, lasts = N.FIRST_NAMES[lang], N.LAST_NAMES[lang]
+        if getattr(self, "_attempt", 0) >= 2 or rng.random() < 0.35:
+            # the curated lists are small; synthetic surnames keep doubles unique at any scale
+            heads, tails = N.SURNAME_PARTS.get(lang, N.SURNAME_PARTS["en"])
+            lasts = [h + t for h in rng.sample(heads, min(6, len(heads))) for t in tails]
         pick = (
             (lambda pool, like: _same_class(pool, like, rng)) if lang == "el" else (lambda pool, like: rng.choice(pool))
         )
         if len(parts) == 1:
-            return pick(lasts, parts[0])  # a surname: distinctive, unlike common first names
+            if fold(parts[0]) in _ALL_FIRST_NAMES:
+                return pick(firsts, parts[0])  # "Dear Petros" -> "Dear Kostas"
+            return pick(lasts, parts[0])  # otherwise a surname: distinctive, unlike common first names
         title = ""
         if parts[0].rstrip(".").lower() in (
             "mr",
@@ -146,7 +156,7 @@ class SurrogateFactory:
         return f"{title}{pick(firsts, parts[0])} {pick(lasts, parts[-1])}"
 
     def _make_org(self, original: str, rng: random.Random) -> str:
-        core, legal = _split_legal_form(original)
+        core, legal = split_legal_form(original)
         script = "greek" if is_greek(core) else "latin"
         if script == "greek":
             # one invented word per original word, each in the same declension class,
@@ -176,6 +186,14 @@ class SurrogateFactory:
                     return f"{name} {' '.join(descriptors)}"
                 return f"{' '.join(descriptors)} {name}"
         return name
+
+    def _make_address(self, original: str, rng: random.Random) -> str:
+        script = "greek" if is_greek(original) else "latin"
+        street = _invented(rng, N.SITE_HEAD[script], N.SITE_TAIL[script])
+        prefix = "Οδός " if script == "greek" else ""
+        suffix = "" if script == "greek" else " Street"
+        number = f" {rng.randint(1, 180)}" if any(c.isdigit() for c in original) else ""
+        return f"{prefix}{street}{suffix}{number}"
 
     def _make_product(self, original: str, rng: random.Random) -> str:
         script = "greek" if is_greek(original) else "latin"

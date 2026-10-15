@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from .data.names import FIRST_NAMES as N_FIRST
 from .numbers import MONEY_RE, parse_number
 from .textnorm import fold, stem_key
 from .validators import afm_complete, iban_with_check, luhn_complete
@@ -327,3 +328,184 @@ def run_benchmark(n: int = 300, seed: int = 7) -> str:
 if __name__ == "__main__":  # pragma: no cover
     os.environ.setdefault("DOUBLECAST_HOME", tempfile.mkdtemp())
     print(run_benchmark())
+
+
+# ---------------------------------------------------------------- auto mode (no lists at all)
+LEGAL = {"el": "ΑΕ", "en": "Ltd", "de": "GmbH", "fr": "SAS", "it": "S.r.l.", "es": "S.L."}
+GREET = {"el": "Αγαπητέ", "en": "Dear", "de": "Hallo", "fr": "Bonjour", "it": "Ciao", "es": "Hola"}
+SIGN = {
+    "el": "Με εκτίμηση",
+    "en": "Kind regards",
+    "de": "Viele Grüße",
+    "fr": "Cordialement",
+    "it": "Cordiali saluti",
+    "es": "Saludos",
+}
+TITLE = {"el": "κ.", "en": "Mr", "de": "Herr", "fr": "M.", "it": "Sig.", "es": "Sr."}
+MID = {
+    "el": "Χθες μιλήσαμε με τον {name} για την παραγγελία.",
+    "en": "Yesterday we spoke with {name} about the order.",
+    "de": "Gestern haben wir mit {name} über die Bestellung gesprochen.",
+    "fr": "Hier nous avons parlé avec {name} de la commande.",
+    "it": "Ieri abbiamo parlato con {name} dell'ordine.",
+    "es": "Ayer hablamos con {name} sobre el pedido.",
+}
+START = {
+    "el": "{name} θα επιβεβαιώσει αύριο.",
+    "en": "{name} will confirm tomorrow.",
+    "de": "{name} bestätigt morgen.",
+    "fr": "{name} confirmera demain.",
+    "it": "{name} confermerà domani.",
+    "es": "{name} confirmará mañana.",
+}
+
+
+_SYL = {
+    "el": (
+        ["Παπα", "Καρα", "Μαυρο", "Χατζη", "Σταυρο", "Λαζα", "Μπου", "Τσου", "Γιαννα", "Κουτσο"],
+        ["δάκης", "πουλος", "γιάννης", "ρίδης", "λάκης", "νίδης", "κάκης", "μάνος"],
+    ),
+    "en": (
+        ["Ash", "Brad", "Carr", "Dun", "Elling", "Fair", "Gold", "Hart", "Kings", "Lang"],
+        ["worth", "ley", "ford", "ham", "ton", "wick", "more", "by"],
+    ),
+    "de": (
+        ["Ober", "Stein", "Kling", "Ross", "Wald", "Hollen", "Eber", "Brand"],
+        ["mann", "hauser", "berger", "maier", "hofer", "bach", "feld", "kamp"],
+    ),
+    "fr": (
+        ["Beau", "Mont", "Ville", "Roche", "Belle", "Font", "Lac", "Clair"],
+        ["mont", "ville", "fort", "champ", "lieu", "mard", "rive", "court"],
+    ),
+    "it": (
+        ["Bel", "Mon", "Ross", "Ber", "Casa", "Fonta", "Lom", "Mar"],
+        ["lini", "tani", "vecchi", "nardi", "relli", "zotti", "betti", "ghini"],
+    ),
+    "es": (
+        ["Al", "Bel", "Cas", "Mon", "Val", "Ri", "Oli", "Fer"],
+        ["varez", "monte", "tillo", "garra", "verde", "zuela", "cedo", "ranz"],
+    ),
+}
+
+
+def _unique_names(lang: str, rng: random.Random, used: set[str]):
+    """Endless supply of realistic, never-repeated full names for one language."""
+    firsts = N_FIRST[lang if lang in N_FIRST else "en"]
+    heads, tails = _SYL[lang]
+    mids = (
+        ["", "νο", "λο", "ρο", "μα", "τζο", "κο", "πα", "τα", "σο", "βα", "δο"]
+        if lang == "el"
+        else ["", "en", "ar", "il", "or", "um", "an", "et", "ol", "is", "ad", "ur"]
+    )
+    for _ in range(1_000_000):
+        surname = f"{rng.choice(heads)}{rng.choice(mids)}{rng.choice(tails)}"
+        if surname not in used:
+            used.add(surname)
+            yield f"{rng.choice(firsts)} {surname}"
+    raise RuntimeError("name pool exhausted")
+
+
+RARE_FIRST = {
+    "el": ["Ευδοκία", "Λεωνίδας", "Ισιδώρα", "Αριστείδης", "Πολυξένη", "Ευστάθιος"],
+    "en": ["Gwendolyn", "Ignatius", "Philippa", "Lysander", "Winifred", "Bartholomew"],
+    "de": ["Wilhelmina", "Gottfried", "Hildegard", "Ludwig", "Irmgard", "Siegfried"],
+    "fr": ["Aurèle", "Bérénice", "Gaspard", "Solange", "Anatole", "Ermeline"],
+    "it": ["Ignazio", "Annunziata", "Ottavio", "Liliana", "Tancredi", "Eufemia"],
+    "es": ["Leocadia", "Eusebio", "Remedios", "Anselmo", "Inmaculada", "Fermín"],
+}
+# Held out: none of these sentences was used to build the business-vocabulary filter.
+ORDINARY = [
+    "Last week we discussed the Annual Leave Policy and the Customer Satisfaction Survey with HR.",
+    "The plan covers the Cold Storage Upgrade, Inventory Turnover and Lead Time targets.",
+    "Το νέο Πρόγραμμα Εκπαίδευσης ξεκινά μετά την Ετήσια Απογραφή στην αποθήκη.",
+    "Please review the Purchase Requisition and the Shelf Life data before the Line Trial.",
+]
+
+
+def run_auto_benchmark(n: int = 100, seed: int = 11) -> str:
+    """Leak rates with NO term lists: only structure, the broad net and self-learning."""
+    import pathlib
+
+    from .config import Config
+    from .engine import Engine
+
+    rng = random.Random(seed)
+    buckets: dict[str, list[int]] = {}
+
+    def check(bucket: str, value: str, out: str) -> None:
+        b = buckets.setdefault(bucket, [0, 0])
+        b[1] += 1
+        if value in out:
+            b[0] += 1
+
+    with tempfile.TemporaryDirectory() as tmp:
+        engine = Engine(Config(workspace="auto", home=pathlib.Path(tmp), ner_enabled="off"))
+        used: set[str] = set()
+        for lang in LANGS:
+            names = _unique_names(lang, rng, used)
+            for _ in range(n):
+                # every name is new: nothing can have been learned from an earlier email
+                sender, recipient, third, fourth = next(names), next(names), next(names), next(names)
+                heads, tails = _SYL[lang]
+                org_core = f"{next(names).split()[-1]} {rng.choice(ORGS[lang]).split()[-1]}"
+                org = f"{org_core} {LEGAL[lang]}"
+                first = recipient.split()[0]
+                surname = sender.split()[-1]
+                email = (
+                    f"From: {sender} <{surname.lower()}@example.com>\nTo: {recipient} <x@example.org>\n\n"
+                    f"{GREET[lang]} {first},\n\n{org} — {TITLE[lang]} {surname}.\n\n{SIGN[lang]},\n{sender}\n"
+                )
+                out = engine.scramble(email).text
+                check("1 email header names", sender, out.split("\n\n")[0])
+                check("2 greeting first names", first, out.split("\n\n")[1] if "\n\n" in out else out)
+                check("3 company with legal form", org_core, out)
+                check("4 title + surname", f"{TITLE[lang]} {surname}", out)
+                later = engine.scramble(f"{org_core.lower()} — {sender.lower()}").text
+                check("5 seen before, mentioned later without structure", sender.lower(), later)
+                mid = engine.scramble(MID[lang].format(name=third)).text
+                check("6 new name mid-sentence (broad net)", third, mid)
+                start = engine.scramble(START[lang].format(name=fourth)).text
+                check("7 new name at sentence start, common first name", fourth, start)
+                rare = f"{rng.choice(RARE_FIRST[lang])} {next(names).split()[-1]}"
+                rare_out = engine.scramble(START[lang].format(name=rare)).text
+                check("8 new name at sentence start, uncommon first name (known gap)", rare, rare_out)
+        # cost of over-protection: ordinary capitalised business phrases that get swapped anyway
+        phrases = [
+            "Annual Leave Policy",
+            "Customer Satisfaction Survey",
+            "Cold Storage Upgrade",
+            "Inventory Turnover",
+            "Lead Time",
+            "Πρόγραμμα Εκπαίδευσης",
+            "Ετήσια Απογραφή",
+            "Purchase Requisition",
+            "Shelf Life",
+            "Line Trial",
+        ]
+        joined = " ".join(engine.scramble(t).text for t in ORDINARY)
+        swapped = [ph for ph in phrases if ph not in joined]
+        engine.vault.close()
+
+    lines = [
+        "# Doublecast auto-mode benchmark (no lists)",
+        "",
+        f"{n} synthetic emails per language ({', '.join(LANGS)}), seed {seed}. No term lists, no AI model:",
+        "only email structure, company legal forms, the capitalised-name net and self-learning.",
+        "",
+        "| Situation | Values | Leaked | Leak rate |",
+        "|---|---:|---:|---:|",
+    ]
+    for k in sorted(buckets):
+        leaked, total = buckets[k]
+        lines.append(f"| {k[2:]} | {total} | {leaked} | {leaked / total:.1%} |")
+    lines += [
+        "",
+        f"**Over-protection** (held-out phrases): {len(swapped)} of {len(phrases)} ordinary capitalised business phrases were swapped "
+        f"too ({', '.join(swapped) or 'none'}). Harmless for privacy, but the AI sees an invented name instead. "
+        "Set `auto.capitalized_phrases: false` to trade some recall for cleaner text.",
+        "",
+        "A name that appears for the first time at the start of a sentence is caught when its first name",
+        "is a common one; otherwise it is the remaining gap without lists or an AI model.",
+        "`doublecast discover` closes it for every name that exists in your systems.",
+    ]
+    return "\n".join(lines)

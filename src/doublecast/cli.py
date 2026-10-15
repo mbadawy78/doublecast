@@ -367,10 +367,134 @@ def cmd_vault(args) -> int:
     return 0
 
 
+def _mask(value: str) -> str:
+    """Show enough to recognise a value in a review, not enough for a screen share."""
+    v = str(value)
+    return v if len(v) <= 4 else v[:3] + "…" + ("" if len(v) < 8 else v[-1])
+
+
+def _print_discovery(results, show_values: bool) -> None:
+    for r in results:
+        head = f"{BOLD}{r.name}{RESET} {DIM}({r.kind}){RESET}"
+        if r.error:
+            print(f"{head}  {RED}{r.error}{RESET}")
+            continue
+        print(head)
+        found = [c for c in r.columns if c.category]
+        if not found:
+            print(f"  {DIM}no sensitive columns found{RESET}")
+        for c in found:
+            ex = ", ".join(c.examples if show_values else [_mask(e) for e in c.examples])
+            extra = (
+                f"  {DIM}{c.values} values{', ' + str(c.skipped) + ' skipped' if c.skipped else ''}{RESET}"
+                if c.values
+                else ""
+            )
+            print(
+                f"  {c.category:<9} {c.table} › {c.column}{extra}  {DIM}[{c.reason}]{RESET}"
+                + (f"  e.g. {ex}" if ex else "")
+            )
+        for sk in r.skipped:
+            print(f"  {YELLOW}skipped:{RESET} {sk}")
+        counts = r.counts()
+        if counts:
+            print("  " + GREEN + "→ " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + RESET)
+        print()
+
+
+def cmd_discover(args) -> int:
+    from .discover.run import apply, build_sources, scan
+    from .discover.sources.files import FolderSource
+
+    engine = _engine(args)
+    cfg = engine.config
+    action = args.action or "run"
+
+    if action == "status":
+        srcs = engine.rules.sources()
+        if not srcs and not engine.rules.data["learned"]:
+            print(
+                "Nothing discovered or learned yet. Add sources under discover: in your config, or run: doublecast discover path FOLDER"
+            )
+        for name, info in sorted(srcs.items()):
+            counts = ", ".join(f"{k} {len(v)}" for k, v in sorted(info.get("terms", {}).items()))
+            print(f"{BOLD}{name}{RESET}  refreshed {info.get('refreshed', '?')}  {counts}")
+        learned = {k: len(v) for k, v in engine.rules.data["learned"].items() if v}
+        if learned:
+            print(f"{BOLD}learned on the fly{RESET}  " + ", ".join(f"{k} {v}" for k, v in sorted(learned.items())))
+        total = sum(engine.rules.counts().values())
+        print(f"\n{total} value(s) protected by discovered and learned rules (plus your own terms: {len(cfg.terms)}).")
+        return 0
+    if action == "forget":
+        if not args.target:
+            print("Usage: doublecast discover forget SOURCE|learned", file=sys.stderr)
+            return 2
+        if args.target == "learned":
+            engine.rules.data["learned"] = {}
+            ok = True
+        else:
+            ok = any(
+                engine.rules.remove_source(k)
+                for k in list(engine.rules.sources())
+                if k == args.target or k.endswith(":" + args.target)
+            )
+        engine.rules.save()
+        print("Removed." if ok else "No such source.")
+        return 0
+    if action == "ignore":
+        if not args.target:
+            print("Usage: doublecast discover ignore VALUE", file=sys.stderr)
+            return 2
+        engine.rules.ignore(args.target)
+        engine.rules.save()
+        print(f"'{args.target}' will never be protected by discovered or learned rules.")
+        return 0
+
+    if action == "path":
+        if not args.target:
+            print("Usage: doublecast discover path FOLDER_OR_FILE", file=sys.stderr)
+            return 2
+        sources = [FolderSource(Path(args.target).name or "files", args.target)]
+    else:
+        if not cfg.discover_sources:
+            print("No sources configured. Add them under discover: sources: in your config (see docs/discover.md),")
+            print("or scan a folder of Excel/CSV files now: doublecast discover path ~/Documents/masterdata")
+            return 1
+        sources = build_sources(cfg, engine.vault)
+        if args.source:
+            sources = [s for s in sources if s.name == args.source]
+
+    results = []
+    for src in sources:
+        if not args.quiet:
+            print(f"{DIM}Scanning {src.name} ({src.kind})...{RESET}", file=sys.stderr)
+        say = None if args.quiet else (lambda m: print(DIM + m + RESET, file=sys.stderr))
+        results.append(scan(src, cfg.discover_sample_rows, cfg.discover_max_values, say))
+    if not args.quiet:
+        _print_discovery(results, args.show_values)
+    total = sum(sum(r.counts().values()) for r in results)
+    if args.dry_run or total == 0:
+        print("Dry run: nothing saved." if args.dry_run else "Nothing to save.")
+        return 0
+    if not args.yes:
+        answer = input(f"Protect these {total} value(s) from now on? [Y/n] ").strip().lower()
+        if answer not in ("", "y", "yes", "ν", "ναι"):
+            print("Nothing saved.")
+            return 0
+    apply(results, engine.rules)
+    print(f"{GREEN}Saved.{RESET} {total} value(s) are now protected (encrypted in {cfg.rules_path}).")
+    return 0
+
+
 def cmd_bench(args) -> int:
     from .bench import run_benchmark
 
-    report = run_benchmark(n=args.n, seed=args.seed)
+    if args.auto:
+        from .bench import run_auto_benchmark
+
+        report = run_auto_benchmark(n=min(args.n, 150), seed=args.seed)
+    else:
+        report = run_benchmark(n=args.n, seed=args.seed)
     print(report)
     if args.output:
         Path(args.output).write_text(report, encoding="utf-8")
@@ -478,10 +602,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--yes", action="store_true")
     s.set_defaults(func=cmd_vault)
 
+    s = sub.add_parser(
+        "discover",
+        help="learn what is sensitive from your systems (Power BI, Microsoft 365, Dynamics 365, SharePoint, SQL, files)",
+    )
+    s.add_argument("action", nargs="?", choices=["run", "path", "status", "forget", "ignore"], default="run")
+    s.add_argument("target", nargs="?", help="folder for 'path', source for 'forget', value for 'ignore'")
+    s.add_argument("--source", help="run only the source with this name")
+    s.add_argument("--dry-run", action="store_true", help="show what would be protected, save nothing")
+    s.add_argument("--yes", action="store_true", help="save without asking (for scheduled refreshes)")
+    s.add_argument("--quiet", action="store_true", help="no progress or report output")
+    s.add_argument("--show-values", action="store_true", help="show example values in full (default: masked)")
+    s.set_defaults(func=cmd_discover)
+
     s = sub.add_parser("bench", help="run the leak benchmark on synthetic data")
     s.add_argument("-n", type=int, default=300, help="documents per language")
     s.add_argument("--seed", type=int, default=7)
     s.add_argument("-o", "--output", help="write the Markdown report here")
+    s.add_argument("--auto", action="store_true", help="benchmark auto mode: no lists, only structure and learning")
     s.set_defaults(func=cmd_bench)
 
     s = sub.add_parser("doctor", help="check the installation")

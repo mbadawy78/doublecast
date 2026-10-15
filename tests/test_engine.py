@@ -83,15 +83,15 @@ def test_iban_digits_are_not_mistaken_for_cards(engine):
     assert out.startswith("IBAN GR")
 
 
-def test_stand_ins_are_never_rescrambled(engine):
+def test_structured_doubles_are_never_rescrambled(engine):
     once = engine.scramble(SAMPLE).text
     twice = engine.scramble(once).text
-    # names, IDs, contacts stay as they are; only money would be scaled again,
-    # which is why the proxy never feeds scrambled text back through scramble
+    # emails, phones, IBANs, tax IDs and invoice numbers that are already doubles stay as they are.
+    # Names may be swapped again on purpose: a real person can share a name with a double.
     import re
 
-    strip_money = lambda t: re.sub(r"€[\d.,]+", "€X", t)  # noqa: E731
-    assert strip_money(once) == strip_money(twice)
+    structured = r"[\w.]+@[\w.]+|\+30 [\d ]+|GR\d\d[\d ]+|ΑΦΜ: \d+|INV-[\d/]+"
+    assert re.findall(structured, once) == re.findall(structured, twice)
 
 
 def test_money_scaling_keeps_ratios_and_restores(engine):
@@ -134,9 +134,16 @@ def test_dates_shift_by_whole_weeks(tmp_path):
     e.vault.close()
 
 
-def test_unlisted_name_hint(engine):
+def test_unlisted_names_are_caught_on_the_fly(engine):
     res = engine.scramble("Please call Theodora Vlachaki about it.")
+    assert "Theodora Vlachaki" not in res.text
+
+
+def test_unlisted_name_hint_when_broad_net_is_off(tmp_path):
+    e = Engine(make_config(tmp_path, capitalized_phrases=False))
+    res = e.scramble("Please call Theodora Vlachaki about it.")
     assert any("Theodora Vlachaki" in w for w in res.warnings)
+    e.vault.close()
 
 
 def test_pack_patterns_need_digits(engine):

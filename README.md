@@ -38,6 +38,7 @@ Doublecast takes a different approach: **consistent, realistic doubles that roun
 | | Typical PII redactors | Doublecast |
 |---|---|---|
 | Built around | People's names and emails | **Business data**: customers, suppliers, SKUs, plants, deals, prices, plus personal data |
+| What you set up | Lists, or an AI model | **Nothing**: names are found from the structure of emails and spreadsheets and remembered; or learned from your own systems (Power BI, Microsoft 365, Dynamics 365, SharePoint, SQL) |
 | What the AI sees | `[PERSON_1]`, `<ORG>` | Realistic doubles: "Verfield Hellas", "Anna Tzannis" |
 | Numbers | Left alone (leak) or masked (useless) | **Secret scaling**: real amounts hidden, every ratio exact |
 | Answer comes back | With placeholders you decode by hand | **Restored automatically**, even when streamed token by token |
@@ -47,22 +48,32 @@ Doublecast takes a different approach: **consistent, realistic doubles that roun
 ## Install
 
 ```bash
-pip install "git+https://github.com/mimisbadawy78/doublecast"   # Python 3.10+  (PyPI: pip install doublecast, coming soon)
-doublecast init                                         # creates ~/.doublecast/{config.yaml, key, vault}
+pip install "doublecast[all] @ git+https://github.com/mimisbadawy78/doublecast"   # Python 3.10+
+doublecast init                     # creates ~/.doublecast/{config.yaml, key, vault}
 ```
 
-Then list what matters to you in `~/.doublecast/config.yaml`. This is your strongest protection:
+That's it: no lists required. Doublecast protects names three ways, from least to most effort:
 
-```yaml
-terms:
-  ORG:     [Nordia Hellas, {value: Kallergis, aliases: [Καλλέργης]}]
-  PERSON:  [Eleni Papadopoulou, Georgios Andreou]
-  SITE:    [Larissa Plant]
-  PRODUCT: [Golden Twist 80g]
-  PROJECT: [Project Falcon]
-term_files: [customers.csv]       # or export long lists straight from your ERP
-allow:   [Greece, Athens]         # never touch these
-```
+1. **Auto mode (on by default).** Names are found from the structure of business text: email
+   headers, greetings ("Dear Petros", «Αγαπητέ κ. Ανδρέου»), titles, sign-offs, company legal
+   forms ("… S.A.", "… ΑΕ", "… GmbH"), spreadsheet columns headed Customer / Πελάτης / Salesperson
+   / Είδος, and capitalised names mid-sentence. Every name found is **remembered**, so it is
+   caught everywhere afterwards, in any case or Greek inflection.
+2. **Discovery.** Point Doublecast at your systems once and it learns every customer, supplier,
+   product, employee and site they contain, refreshed nightly:
+   ```bash
+   doublecast discover path ~/Documents/masterdata   # a folder of Excel/CSV files, no setup
+   doublecast discover                               # Power BI, Microsoft 365, Dynamics 365, SharePoint, SQL
+   ```
+   It classifies every column by its name and a sample of its values, in six languages, and
+   never sends anything anywhere. See [docs/discover.md](docs/discover.md).
+3. **Your own list** for the handful of values that must always be protected:
+   ```yaml
+   terms:
+     ORG:     [Nordia Hellas, {value: Kallergis, aliases: [Καλλέργης]}]
+     PROJECT: [Project Falcon]
+   allow:   [Greece, Athens]         # never touch these
+   ```
 
 Patterns catch everything with a recognisable shape, with no lists needed: emails, phones, IBANs (checksum-validated), Greek ΑΦΜ / ΑΜΚΑ / ΑΔΤ, EU VAT numbers, Spanish DNI/NIE, Italian codice fiscale, French NIR, German Steuer-ID, invoice/PO/lot/SKU/case/patient numbers, IPv4 addresses, money (including `€2.3m`, `$1.2bn`, `1,5 εκατ. ευρώ`), and API keys, tokens, passwords, `Bearer`/`Basic` credentials and card numbers (removed, never restored). Column headers count as context in spreadsheets, so a bare number under "ΑΦΜ" is treated as a VAT number.
 
@@ -107,6 +118,12 @@ doublecast restore  answer.docx               # -> answer.restored.docx
 ```
 
 Excel keeps formulas and formats (money columns are scaled, percentages untouched); Word keeps run-level formatting, tables, headers and footers; PDFs are extracted to Markdown.
+
+### As a Claude skill
+
+Add [`integrations/claude-skill/doublecast`](integrations/claude-skill/doublecast/SKILL.md) to Claude
+(`~/.claude/skills/` for Claude Code) and Claude will read company files through Doublecast and
+write results back with real values restored, without being reminded. See [docs/skill.md](docs/skill.md).
 
 ### Agents (MCP)
 
@@ -153,14 +170,29 @@ Greek nouns change form with grammatical case, and English-first tools miss it. 
 | Exact round-trip `restore(scramble(x)) == x` | **100%** |
 | Restore after the model upper-cases, adds possessives, or puts a Greek name in the genitive | **100%** |
 | Ratio drift from money scaling | < 0.001% |
-| **Names nobody listed** (AI detector off) | **100% leaked**, by design (see below) |
+| **Names nobody listed**, in that same corpus (caught by auto mode alone) | **0 of 543** |
+
+**Auto mode with no lists at all** (`doublecast bench --auto`, 600 synthetic emails, every name new, [report](docs/benchmark-auto.md)):
+
+| Where the name appears | Leaked |
+|---|---|
+| Email headers, greetings, titles, sign-offs, company legal forms | **0%** |
+| Seen once anywhere, mentioned again later with no structure | **0%** |
+| New name mid-sentence | **0%** |
+| New name at a sentence start, common first name | **0%** |
+| New name at a sentence start, **uncommon first name** | **100%**: the gap that discovery or a list closes |
+| Ordinary capitalised phrases swapped by mistake | 1 of 10 ("Purchase Requisition") |
+
+The vocabulary threshold was tuned while looking at those 10 phrases, so treat that row as indicative. Real-world over-protection reports are welcome.
 
 **Read this honestly.** The corpus is synthetic and written by the same project that it tests, so a 0% here is a regression gate, not a guarantee. Harder, adversarial test cases are the most valuable contribution you can make.
 
 ## What Doublecast does *not* do
 
 - **It is not anonymisation.** Context can still identify a company ("the largest olive-oil exporter on Crete"). A [2026 study](https://www.alphaxiv.org/abs/2605.30848) found web-search agents re-identified roughly half to three-quarters of Presidio-redacted transcripts from context alone. Doublecast reduces exposure; it does not make you anonymous.
-- **Unlisted names are not caught by default.** Names that nobody listed and that have no recognisable shape pass through. Install the optional local detector (`pip install "doublecast[ner]"`, GLiNER, runs on your machine) as a safety net, and keep your lists current. `doublecast scan` flags capitalised names it left alone.
+- **Not every unknown name is caught.** Auto mode needs a clue: structure, a capital letter mid-sentence, or a common first name. A name seen for the first time at the start of a sentence with an uncommon first name, or written in lower case, passes through. Discovery covers every name in your systems; the optional local AI detector (`pip install "doublecast[ner]"`) adds a safety net. `doublecast scan` shows exactly what will change.
+- **Auto mode over-protects a little.** A capitalised phrase that isn't everyday vocabulary may be swapped even when it isn't a name (an internal product line, a team nickname). That is harmless for privacy; turn it off with `auto.capitalized_phrases: false`.
+- **Doubles can be swapped twice.** If text that already contains doubles is scrambled again (for example a scrambled file read through the proxy), names may be doubled again. Restoring then returns the first double, not the real name. Emails, IBANs and IDs are never doubled twice.
 - **Only what you listed, in the forms you listed.** `Nordia Hellas` is caught in any case, accent or Greek inflection, but `Nordia-Hellas`, `NordiaHellas`, the bare brand `Nordia`, or `Larissa` on its own (when you listed `Larissa Plant`) are not. Add those as aliases or separate terms.
 - **Images and binary PDFs inside API requests** can't be rewritten; the proxy logs a warning when they pass through. Scramble files with `doublecast scramble` first.
 - **Amounts the AI invents** from general knowledge ("a typical €100 fee") are divided by the secret factor on the way back too. Amounts the AI computes from your figures restore to within a cent.
@@ -177,6 +209,8 @@ Everything lives in `~/.doublecast/config.yaml` (override the folder with `DOUBL
 | `mode` | `warn` | `warn`: log and send · `block`: refuse to send when scrambling fails |
 | `packs` | all | `fmcg`, `finance`, `hr`, `legal_health` pattern packs |
 | `languages` | all six | Which national ID / phone patterns to run |
+| `auto.structure` / `auto.capitalized_phrases` / `auto.learn` | `true` | Auto mode: find names without lists, broad net, remember what is found |
+| `discover.sources` | none | Systems to learn from ([docs/discover.md](docs/discover.md)) |
 | `numbers.scale_money` | `true` | Secret scaling for amounts with a currency |
 | `numbers.scale_quantities` | `false` | Same for kg, units, cases, pallets (separate factor) |
 | `dates.shift` | `false` | Move dates by a secret number of whole weeks (weekdays stay right; each date keeps its written form) |
@@ -197,7 +231,9 @@ Full reference: [docs/configuration.md](docs/configuration.md). Industry packs: 
 | `doublecast env claude\|codex` | Print the settings for a tool |
 | `doublecast mcp` | MCP server (stdio) |
 | `doublecast vault stats\|list\|forget\|wipe` | Manage the vault |
-| `doublecast bench` | Leak benchmark |
+| `doublecast discover [path FOLDER]` | Learn what is sensitive from your systems ([docs](docs/discover.md)) |
+| `doublecast discover status\|ignore\|forget` | See and manage discovered and learned rules |
+| `doublecast bench [--auto]` | Leak benchmark (with lists, or auto mode with none) |
 | `doublecast doctor` | Check the installation |
 
 ## Roadmap
@@ -205,6 +241,7 @@ Full reference: [docs/configuration.md](docs/configuration.md). Industry packs: 
 - Browser extension for claude.ai, ChatGPT and Gemini (scramble on paste, restore in-page)
 - Desktop drag-and-drop app for non-technical colleagues
 - PowerPoint support, OCR for scanned PDFs
+- Discovery connectors for Salesforce, SAP, Google Workspace and HubSpot
 - Benchmarked local NER for Greek, and more languages (Bulgarian, Romanian, Turkish, Arabic)
 - Shared team vaults, and an audit log of what was protected
 

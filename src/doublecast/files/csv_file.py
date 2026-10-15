@@ -47,7 +47,7 @@ def process_csv(engine: Engine, src: Path, dst: Path, direction: str):
             elif value:
                 if direction == "scramble":
                     header = rows[0][c_idx] if r_idx > 0 and c_idx < len(rows[0]) else None
-                    new, found = scramble_cell(engine, header, value)
+                    new, found = scramble_cell(engine, header, value, src.stem)
                     new_row.append(new)
                     for k, n in found.items():
                         counts[k] = counts.get(k, 0) + n
@@ -58,4 +58,5 @@ def process_csv(engine: Engine, src: Path, dst: Path, direction: str):
         out_rows.append(new_row)
     with open(dst, "w", encoding="utf-8", newline="") as fh:
         csv.writer(fh, dialect).writerows(out_rows)
+    engine.flush_learned()
     return counts, []

@@ -600,3 +600,91 @@ GREEK_TAIL_BY_ENDING = {
     "ες": ["ίδες", "άδες"],
     "οι": ["ίνοι", "άτοι"],
 }
+
+# Common first names used only to RECOGNISE a lone first name ("Dear Petros,").
+# Doubles are still drawn from FIRST_NAMES above.
+RECOGNISED_FIRST_NAMES = sorted(
+    {n for lst in FIRST_NAMES.values() for n in lst}
+    | set(
+        """Petros Pavlos Michalis Apostolos Ilias Evangelos Vangelis Antonis Stavros Tasos Thanasis Fotis Lambros
+        Sotiris Yannis Yiannis Giorgos George Kostas Kosta Dimitra Despina Panagiota Konstantina Stella Marina
+        Alexandra Paraskevi Vicky Popi Nikoletta Theodora Chrysa Efi Roula Kyriakos Manos Panos Babis Takis
+        Πέτρος Παύλος Μιχάλης Απόστολος Ηλίας Ευάγγελος Βαγγέλης Αντώνης Σταύρος Τάσος Θανάσης Φώτης Λάμπρος
+        Σωτήρης Πάνος Μάνος Κυριάκος Δήμητρα Δέσποινα Παναγιώτα Κωνσταντίνα Στέλλα Μαρίνα Αλεξάνδρα Παρασκευή
+        Βίκυ Πόπη Νικολέτα Θεοδώρα Χρύσα Έφη Ρούλα
+        John Paul Peter Mark David Richard Robert William Andrew Stephen Simon Chris Christopher Matthew Anthony
+        Mary Elizabeth Sarah Anna Kate Katherine Helen Jane Susan Claire Rachel Emma Lisa Nicole Julia Maria
+        Michael Martin Klaus Jürgen Wolfgang Andreas Thomas Stefan Sabine Petra Monika Claudia Birgit
+        Pierre Jean Michel Philippe François Nicolas Sophie Isabelle Nathalie Marie Christine
+        Giuseppe Giovanni Francesco Antonio Roberto Alessandra Giovanna Anna Rosa
+        José Juan Carlos Luis Miguel Javier Manuel Pedro Ana Isabel Pilar Rosa Cristina""".split()
+    )
+)
+
+# Syllables for an unlimited supply of realistic surnames once the lists above
+# run out (every real name needs its own double).
+SURNAME_PARTS = {
+    "el": (
+        [
+            "Αλε",
+            "Βαρ",
+            "Γερο",
+            "Δρα",
+            "Ζαχα",
+            "Θεο",
+            "Κοντο",
+            "Λια",
+            "Μαρκο",
+            "Νικο",
+            "Πετρο",
+            "Ρου",
+            "Σαρα",
+            "Τρια",
+            "Φιλι",
+            "Χαρα",
+        ],
+        [
+            "κάκης",
+            "λίδης",
+            "νάκης",
+            "ρίδης",
+            "τζάκης",
+            "πουλος",
+            "γιαννος",
+            "μάνος",
+            "νίου",
+            "ρίου",
+            "λάκου",
+            "ράς",
+            "τάς",
+            "πούλου",
+            "ίδου",
+            "κάκη",
+            "λίδη",
+        ],
+    ),
+    "el_latin": (
+        ["Ale", "Var", "Gero", "Dra", "Zacha", "Theo", "Konto", "Lia", "Marko", "Niko", "Petro", "Rou", "Sara"],
+        ["kakis", "lidis", "nakis", "ridis", "poulos", "manos", "niou", "riou", "poulou", "idou"],
+    ),
+    "en": (
+        ["Al", "Bram", "Cal", "Dar", "El", "Fen", "Gar", "Hal", "Kel", "Mar", "Nor", "Pem", "Ros", "Sel", "Tal", "Wen"],
+        ["bury", "croft", "dale", "field", "gate", "hurst", "ley", "more", "ridge", "stead", "wood", "worth"],
+    ),
+    "de": (
+        ["Alt", "Bern", "Dorn", "Eich", "Fels", "Grun", "Hag", "Lind", "Mor", "Sand", "Thal", "Wolfs"],
+        ["bauer", "berg", "dorf", "hausen", "heimer", "kamp", "mann", "rath", "stett", "wald"],
+    ),
+    "fr": (
+        ["Ber", "Char", "Dela", "Fer", "Gal", "Lan", "Mar", "Pel", "Rou", "Sau", "Ver"],
+        ["ard", "eau", "enne", "ier", "in", "ot", "ville", "mont", "court", "oux"],
+    ),
+    "it": (
+        ["Bar", "Cal", "Dal", "Fer", "Gal", "Lan", "Mar", "Pal", "Ros", "San", "Ver"],
+        ["delli", "etti", "ini", "otti", "ucci", "ari", "oni", "ello", "esi"],
+    ),
+    "es": (
+        ["Al", "Bal", "Car", "Del", "Fer", "Gal", "Lar", "Mar", "Ped", "Sal", "Val"],
+        ["aga", "arro", "edo", "ez", "illa", "oza", "uela", "era", "ado"],
+    ),
+}

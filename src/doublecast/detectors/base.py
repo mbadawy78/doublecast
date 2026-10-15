@@ -9,6 +9,8 @@ PRIORITY = {
     "pattern": 80,
     "dictionary": 70,
     "pack": 65,
+    "column": 62,
+    "heuristic": 60,
     "ner": 50,
     "money": 40,
     "quantity": 35,

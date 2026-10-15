@@ -68,7 +68,7 @@ def process_xlsx(engine: Engine, src: Path, dst: Path, direction: str):
                         continue
                     if direction == "scramble":
                         in_body = header_row and cell.row > header_row
-                        new, found = scramble_cell(engine, headers.get(cell.column) if in_body else None, v)
+                        new, found = scramble_cell(engine, headers.get(cell.column) if in_body else None, v, ws.title)
                         if found:
                             cell.value = new
                             for k, n in found.items():
@@ -93,10 +93,10 @@ def process_xlsx(engine: Engine, src: Path, dst: Path, direction: str):
                             counts[label] = counts.get(label, 0) + 1
                     elif direction == "scramble" and isinstance(v, int) and abs(v) >= 10_000:
                         # long whole numbers may be IDs (ΑΦΜ, phone, account): check with the header as context
-                        new, found = scramble_cell(engine, headers.get(cell.column), str(v))
+                        new, found = scramble_cell(engine, headers.get(cell.column), str(v), ws.title)
                         if not found and len(str(abs(v))) == 8:
                             # Excel drops leading zeros: 094014201 is stored as 94014201
-                            new, found = scramble_cell(engine, headers.get(cell.column), str(v).zfill(9))
+                            new, found = scramble_cell(engine, headers.get(cell.column), str(v).zfill(9), ws.title)
                         if found:
                             cell.value = new  # stored as text, like most ID columns
                             cell.number_format = "@"
@@ -107,6 +107,7 @@ def process_xlsx(engine: Engine, src: Path, dst: Path, direction: str):
                     if direction == "scramble":
                         counts["DATE"] = counts.get("DATE", 0) + 1
     wb.save(dst)
+    engine.flush_learned()
     if direction == "scramble" and any(ws._charts or ws._images for ws in wb.worksheets):  # noqa: SLF001
         warnings.append("Charts or images were found; check them in the scrambled copy.")
     return counts, warnings

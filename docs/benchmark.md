@@ -15,12 +15,12 @@ Listed = in the term lists or caught by a pattern detector. Unlisted = a person 
 | SECRET | 147 | 0 | 0.0% |
 | SITE | 543 | 0 | 0.0% |
 | TAX_ID | 543 | 0 | 0.0% |
-| UNLISTED_PERSON | 543 | 543 | 100.0% |
+| UNLISTED_PERSON | 543 | 0 | 0.0% |
 
 - **Round-trip exact restore:** 1653/1653 (100.0%)
-- **Restore after model mangling** (upper-case, possessive, Greek genitive): 2773/2773 (100.0%)
-- **Ratio drift from money scaling** (rounding to cents): max 1.17e-05, mean 1.06e-07
-- **Scramble speed:** 81 KB/s on this machine, starting from an empty vault (20.2s for the whole benchmark)
+- **Restore after model mangling** (upper-case, possessive, Greek genitive): 3275/3275 (100.0%)
+- **Ratio drift from money scaling** (rounding to cents): max 1.15e-05, mean 1.38e-07
+- **Scramble speed:** 83 KB/s on this machine, starting from an empty vault (13.2s for the whole benchmark)
 
 Unlisted names leak by design when no AI detector is installed: list your people and partners,
 or install the optional detector (`pip install 'doublecast[ner]'`) as a safety net.

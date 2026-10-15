@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+
 from ..engine import Engine
 from ..restore import apply
 from ..textnorm import fold
@@ -69,12 +71,43 @@ def scale_value(value: float | int, factor: float, direction: str) -> float | in
     return round(raw, 6)
 
 
-def scramble_cell(engine: Engine, header: object, value: str) -> tuple[str, dict[str, int]]:
+WHOLE_CELL = ("ORG", "PERSON", "PRODUCT", "SITE", "PROJECT", "ADDRESS")
+
+
+@functools.lru_cache(maxsize=4096)
+def _header_category(header: str, table: str) -> str | None:
+    from ..discover.profiler import classify_header
+
+    category, _, is_code = classify_header(header, table)
+    if is_code:
+        return "ID"
+    return category
+
+
+def scramble_cell(engine: Engine, header: object, value: str, table: str = "") -> tuple[str, dict[str, int]]:
     """Scramble one cell, letting its column header act as context.
 
-    A bare "094014201" in a column headed "ΑΦΜ" is a Greek VAT number; on its
-    own, without the header, the pattern detectors cannot know that.
+    * A column headed "Customer", "Πελάτης", "Salesperson", "Product", "Αποθήκη"...
+      is swapped cell by cell, whatever the cell says: no list needed.
+    * A bare "094014201" in a column headed "ΑΦΜ" is a Greek VAT number; on its
+      own, without the header, the pattern detectors cannot know that.
     """
+    category = _header_category(header, table) if isinstance(header, str) and header.strip() else None
+    stripped = value.strip()
+    is_code_cell = category == "ID" and any(c.isdigit() for c in stripped) and " " not in stripped
+    if (
+        (category in WHOLE_CELL or is_code_cell)
+        and stripped
+        and not stripped.replace(".", "").replace(",", "").isdigit()
+    ):
+        from ..discover.profiler import PLACEHOLDERS
+
+        if fold(stripped) not in PLACEHOLDERS and len(stripped) >= 2:
+            double = engine.stand_in(category, stripped)
+            engine.learn_value(category, stripped)
+            lead = value[: len(value) - len(value.lstrip())]
+            trail = value[len(value.rstrip()) :]
+            return f"{lead}{double}{trail}", {category: 1}
     prefix = f"{header}: " if isinstance(header, str) and header.strip() else ""
     reps, spans, _ = engine.plan(prefix + value)
     n = len(prefix)

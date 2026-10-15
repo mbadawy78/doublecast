@@ -164,6 +164,13 @@ class Vault:
             rows = self._db.execute("SELECT category, COUNT(*) FROM mappings GROUP BY category").fetchall()
         return {cat: n for cat, n in rows}
 
+    # ---------------------------------------------------------------- encryption for other local files
+    def encrypt(self, data: bytes) -> bytes:
+        return self._fernet.encrypt(data)
+
+    def decrypt(self, token: bytes) -> bytes:
+        return self._fernet.decrypt(token)
+
     # ---------------------------------------------------------------- secrets
     def _meta(self, name: str) -> str | None:
         with self._lock:
