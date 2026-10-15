@@ -1,0 +1,51 @@
+name: fmcg
+title: FMCG & manufacturing
+description: >
+  Product codes, barcodes, batches, purchase/sales orders, delivery notes and
+  plant/line identifiers used in food, beverage and consumer-goods operations.
+  Customers, suppliers, plants and recipes are best protected by listing them
+  in your own terms (ORG, SITE, PRODUCT); this pack catches the codes around them.
+
+patterns:
+  - name: ean13_barcode
+    category: ID
+    regex: '(?<!\d)\d{13}(?!\d)'
+    validator: ean13
+  - name: sku_code
+    category: ID
+    regex: '\b(?:SKU|κωδ\.?|κωδικός|κωδικού|Artikelnummer|réf\.?|référence)\s*{MARKER}?\s*[:#]?\s*([A-Z0-9][A-Z0-9./-]{3,})'
+    group: 1
+  - name: item_code
+    category: ID
+    regex: '\b(?:item|article|art\.|Artikel|codice|código|cod\.)\s*{MARKER}\s*[:#]?\s*([A-Z0-9][A-Z0-9./-]{3,})'
+    group: 1
+  - name: batch_lot
+    category: ID
+    regex: '\b(?:lot|batch|παρτίδα|παρτίδας|charge|lotto|lote)\s*{MARKER}?\s*[:#]?\s*([A-Z0-9][A-Z0-9./-]{3,})'
+    group: 1
+  - name: purchase_order
+    category: ID
+    regex: '\b(?:P\.O\.|purchase order|sales order|παραγγελία|παραγγελίας|Bestellung|commande|ordine|pedido)\s*{MARKER}?\s*[:#]?\s*([A-Z0-9][A-Z0-9/-]{3,})'
+    group: 1
+  - name: po_abbreviation
+    category: ID
+    regex: '\bPO\s*{MARKER}?\s*[:#]?\s*([A-Z0-9][A-Z0-9/-]{3,})'
+    group: 1
+    ignore_case: false
+  - name: delivery_note
+    category: ID
+    regex: '\b(?:delivery note|δελτίο αποστολής|Δ\.?Α\.?|Lieferschein|bon de livraison|DDT|albarán)\s*{MARKER}?\s*[:#]?\s*([A-Z0-9][A-Z0-9/-]{3,})'
+    group: 1
+  - name: vehicle_plate_gr
+    category: ID
+    regex: '(?<![\w])[ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ]{3}[\s-]?\d{4}(?![\d])'
+    ignore_case: false
+    languages: [el]
+
+# Column headers that hold money or quantities in spreadsheets (any language).
+money_headers: [price, cost, value, amount, revenue, sales, turnover, margin, gross profit, net profit,
+  discount, rebate, listing fee, promo, invoice, τιμή, κόστος, αξία, ποσό, τζίρος, πωλήσεις, έκπτωση,
+  περιθώριο, κέρδος, preis, kosten, umsatz, betrag, prix, coût, montant, chiffre d'affaires, prezzo,
+  costo, importo, fatturato, precio, coste, importe, ventas]
+quantity_headers: [qty, quantity, volume, kg, tons, tonnes, units, pcs, cases, pallets, ποσότητα, κιλά,
+  τόνοι, τεμάχια, κιβώτια, παλέτες, menge, stück, quantité, quantità, cantidad]

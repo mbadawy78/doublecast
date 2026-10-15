@@ -1,0 +1,382 @@
+"""The engine: detect, swap for doubles, and restore.
+
+engine = Engine(load_config())
+out = engine.scramble("Invoice for Nordia Hellas, €12.400,00, IBAN GR16 0110 ...")
+send(out.text)                     # only stand-ins leave the machine
+answer = engine.restore(ai_reply)  # real values come back
+"""
+
+from __future__ import annotations
+
+import bisect
+import logging
+import re
+from dataclasses import dataclass, field
+
+from .config import Config, load_config
+from .detectors.base import Span, resolve_overlaps
+from .detectors.dictionary import DictionaryDetector
+from .detectors.ner import NerDetector
+from .detectors.patterns import CORE_PATTERNS, detect_ibans, detect_patterns, load_pack, load_pack_meta
+from .detectors.secrets import detect_secrets
+from .numbers import NumberTransformer, guess_decimal_char
+from .restore import Restorer, StreamRestorer, apply
+from .surrogates import SurrogateFactory, match_case
+from .textnorm import fold, greek_stem, inflect_words
+from .vault import Vault
+
+log = logging.getLogger("doublecast")
+
+REDACTED_RE = re.compile(r"\[REDACTED:[a-z_]+\]")
+
+# Capitalised multi-word names that were not swapped: a hint that a term may be missing.
+_UNLISTED_RE = re.compile(r"(?<![\w.])(?:[A-ZΑ-ΩΆΈΉΊΌΎΏ][\w'’&.-]+(?:\s+(?:&\s+)?[A-ZΑ-ΩΆΈΉΊΌΎΏ][\w'’&.-]+){1,3})")
+_COMMON_CAPS = {
+    fold(w)
+    for w in (
+        "The",
+        "This",
+        "That",
+        "These",
+        "We",
+        "I",
+        "You",
+        "Dear",
+        "Hi",
+        "Hello",
+        "Best",
+        "Regards",
+        "Kind",
+        "Thanks",
+        "Thank",
+        "Please",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "EU",
+        "VAT",
+        "CEO",
+        "COO",
+        "CFO",
+        "OK",
+        "Total",
+        "Invoice",
+        "No",
+        "Price",
+        "Key",
+        "Team",
+        "Account",
+        "Ms",
+        "Mr",
+        "Mrs",
+        "Dr",
+        "Subject",
+        "Re",
+        "Fwd",
+        "From",
+        "To",
+        "Cc",
+        "Sent",
+        "Date",
+        "Note",
+        "Summary",
+        "Action",
+        "Items",
+        "Next",
+        "Steps",
+        "Αγαπητέ",
+        "Αγαπητή",
+        "Καλημέρα",
+        "Καλησπέρα",
+        "Ευχαριστώ",
+        "Με",
+        "Το",
+        "Η",
+        "Ο",
+        "Οι",
+        "Τα",
+        "Στο",
+        "Στη",
+    )
+}
+
+
+def _word_root(folded_word: str) -> str:
+    stem = greek_stem(folded_word)
+    return stem or folded_word
+
+
+class _Guard:
+    """Fast "does this span touch any protected interval?" (intervals may overlap)."""
+
+    def __init__(self, intervals: list[tuple[int, int]]):
+        ordered = sorted(intervals)
+        self.starts = [s for s, _ in ordered]
+        self.max_end: list[int] = []
+        running = -1
+        for _, e in ordered:
+            running = max(running, e)
+            self.max_end.append(running)
+
+    def hits(self, start: int, end: int) -> bool:
+        i = bisect.bisect_left(self.starts, end)  # intervals that start before `end`
+        return i > 0 and self.max_end[i - 1] > start
+
+
+@dataclass
+class ScrambleResult:
+    text: str
+    spans: list[Span] = field(default_factory=list)
+    replacements: list[tuple[str, str, str]] = field(default_factory=list)  # (category, original, stand-in)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.spans)
+
+    def summary(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for s in self.spans:
+            counts[s.category] = counts.get(s.category, 0) + 1
+        return counts
+
+
+class Engine:
+    def __init__(self, config: Config | None = None, vault: Vault | None = None):
+        self.config = config or load_config()
+        self.vault = vault or Vault(self.config.vault_path, self.config.key_path)
+        self.factory = SurrogateFactory(self.vault.seed(), self.config.default_language, self.config.languages)
+        self.dictionary = DictionaryDetector(self.config.terms, self.config.allow)
+        self.pattern_specs = list(CORE_PATTERNS)
+        self.money_headers: set[str] = set()
+        self.quantity_headers: set[str] = set()
+        for pack in self.config.packs:
+            self.pattern_specs.extend(load_pack(pack))
+            meta = load_pack_meta(pack)
+            self.money_headers.update(fold(h) for h in meta.get("money_headers", []) or [])
+            self.quantity_headers.update(fold(h) for h in meta.get("quantity_headers", []) or [])
+        self.numbers = NumberTransformer(
+            self.vault.factor("money"),
+            self.vault.factor("quantity"),
+            self.vault.date_offset_days(),
+            scale_money=self.config.scale_money,
+            scale_quantities=self.config.scale_quantities,
+            shift_dates=self.config.shift_dates,
+            locale=self.config.number_locale,
+        )
+        self.allow = {fold(a).strip() for a in self.config.allow}
+        self._term_roots = {
+            _word_root(w)
+            for t in self.config.terms
+            for v in (t.value, *t.aliases)
+            for w in fold(v).split()
+            if len(w) >= 4
+        }
+        self._term_values = {fold(t.value) for t in self.config.terms} | {
+            fold(a) for t in self.config.terms for a in t.aliases
+        }
+        self.ner: NerDetector | None = None
+        if self.config.ner_enabled in ("auto", "on"):
+            self.ner = NerDetector(self.config.ner_model, self.config.ner_labels, self.config.ner_threshold)
+            if not self.ner.available:
+                if self.config.ner_enabled == "on":
+                    log.warning("NER requested but unavailable: %s", self.ner.error)
+                self.ner = None
+        self._cache: dict[str, str] = {}
+        self.totals: dict[str, int] = {}
+        self._known_words: set[str] = set()
+        self._known_words_version = -1
+        self._known_words_count = 0
+        self._restorer: Restorer | None = None
+        self._restorer_version = -1
+        self._default_decimal = "."
+
+    # ------------------------------------------------------------ restorer cache
+    @property
+    def restorer(self) -> Restorer:
+        if self._restorer is None or self._restorer_version != self.vault.version:
+            mappings = self.vault.mappings()
+            if self._restorer is not None and self._restorer.can_extend(len(mappings)):
+                self._restorer.extend(mappings[self._restorer.size :])
+            else:
+                self._restorer = Restorer(mappings, self._number_matches)
+            self._restorer_version = self.vault.version
+        return self._restorer
+
+    def _number_matches(self, text: str):
+        return self.numbers.restore_matches(text, self._default_decimal)
+
+    # ------------------------------------------------------------ detection
+    def detect(self, text: str) -> list[Span]:
+        spans: list[Span] = []
+        ibans = detect_ibans(text)
+        secrets = detect_secrets(text)
+        # digits inside an IBAN can pass the card checksum: the IBAN wins
+        secrets = [s for s in secrets if not (s.kind == "payment_card" and any(s.overlaps(i) for i in ibans))]
+        spans += secrets
+        spans += ibans
+        spans += detect_patterns(text, self.pattern_specs, self.config.languages)
+        spans += self.dictionary.detect(text)
+        if self.ner:
+            spans += self.ner.detect(text)
+        spans += self.numbers.detect(text)
+        keys = self.vault.surrogate_keys()
+        spans = [s for s in spans if fold(s.text).strip() not in self.allow]
+        # never re-scramble a stand-in (stand-ins can come back in chat history),
+        # nor any shorter detection inside one
+        protected = [(s.start, s.end) for s in spans if s.action == "replace" and fold(s.text).strip() in keys]
+        protected += [m.span() for m in REDACTED_RE.finditer(text)]
+        if protected:
+            guard = _Guard(protected)
+            spans = [s for s in spans if not guard.hits(s.start, s.end)]
+        return resolve_overlaps(spans)
+
+    # ------------------------------------------------------------ stand-ins
+    def stand_in(self, category: str, original: str) -> str:
+        existing = self.vault.get(original)
+        if existing:
+            return existing
+        for attempt in range(40):
+            candidate = self.factory.make(category, original, attempt)
+            key = fold(candidate)
+            if key == fold(original) or key in self._term_values or self.vault.surrogate_taken(candidate):
+                continue
+            own = {_word_root(w) for w in fold(original).split()}  # shared words like "Project", "Plant" are fine
+            if any((r := _word_root(w)) in self._term_roots and r not in own for w in key.split() if len(w) >= 4):
+                continue  # a double must never look like (an inflection of) another real listed name
+            stored = self.vault.put(category, original, candidate)
+            if category == "PERSON":
+                self._register_surname(original, stored)
+            return stored
+        raise RuntimeError(f"Could not find a unique stand-in for a {category} value")
+
+    def _register_surname(self, original: str, surrogate: str) -> None:
+        o_words, s_words = original.split(), surrogate.split()
+        if len(o_words) >= 2 and len(s_words) >= 2 and len(o_words[-1]) >= 4:
+            if self.vault.get(o_words[-1]) is None and not self.vault.surrogate_taken(s_words[-1]):
+                self.vault.put("PERSON_PART", o_words[-1], s_words[-1])
+
+    # ------------------------------------------------------------ public API
+    def plan(self, text: str) -> tuple[list[tuple[int, int, str]], list[Span], list[tuple[str, str, str]]]:
+        """Work out every swap for `text` without applying it.
+
+        Returns (replacements as (start, end, new_text), spans, log rows).
+        """
+        if not text:
+            return [], [], []
+        self._default_decimal = guess_decimal_char(text)
+        spans = self.detect(text)
+        replacements: list[tuple[int, int, str]] = []
+        log_rows: list[tuple[str, str, str]] = []
+        kept: list[Span] = []
+        for span in spans:
+            if span.action == "redact":
+                new = f"[REDACTED:{span.kind or 'secret'}]"
+            elif span.action in ("money", "quantity", "date"):
+                new = self.numbers.forward(span, self._default_decimal)
+                if new is None:
+                    continue
+                if span.action == "date":
+                    # remember the exact written form, so "05/11/24" comes back padded
+                    self.vault.try_put("DATE", span.text, new)
+            else:
+                canonical = span.meta.get("canonical", span.text)
+                new = self.stand_in(span.category, canonical)
+                endings = span.meta.get("endings")
+                if endings:
+                    new = inflect_words(new, endings)  # keep Greek grammar: της Καρανίκα -> της Σολίκα
+                new = match_case(span.text, new)  # "ΝΟΡΔΙΑ" in, "ΒΕΡΦΙΛΝΤ" out
+            replacements.append((span.start, span.end, new))
+            log_rows.append((span.category, span.text, new))
+            kept.append(span)
+        return replacements, kept, log_rows
+
+    def scramble(self, text: str) -> ScrambleResult:
+        if not text:
+            return ScrambleResult(text)
+        replacements, kept, log_rows = self.plan(text)
+        out = apply(text, replacements)
+        for span in kept:
+            self.totals[span.category] = self.totals.get(span.category, 0) + 1
+        return ScrambleResult(out, kept, log_rows, self._warnings(out))
+
+    def scramble_cached(self, text: str) -> str:
+        """Scramble with a memo. Chat clients resend the whole conversation on
+        every turn; stand-ins are deterministic, so repeated text is reused."""
+        hit = self._cache.get(text)
+        if hit is not None:
+            return hit
+        out = self.scramble(text).text
+        if len(self._cache) > 20000:
+            self._cache.clear()
+        self._cache[text] = out
+        return out
+
+    def restore_plan(self, text: str) -> list[tuple[int, int, str]]:
+        if not text:
+            return []
+        self._default_decimal = guess_decimal_char(text)
+        return self.restorer.matches(text)
+
+    def restore(self, text: str) -> str:
+        if not text:
+            return text
+        self._default_decimal = guess_decimal_char(text)
+        return self.restorer.restore(text)
+
+    def stream_restorer(self, escape_json: bool = False) -> StreamRestorer:
+        return StreamRestorer(self.restorer, escape_json=escape_json)
+
+    # ------------------------------------------------------------ hints
+    def _warnings(self, scrambled: str, skip: list[Span] | None = None) -> list[str]:
+        known = self.vault.surrogate_keys()
+        if self._known_words_version != self.vault.version:
+            mappings = self.vault.mappings()
+            if len(mappings) < self._known_words_count:  # vault was wiped or edited
+                self._known_words, self._known_words_count = set(), 0
+            for m in mappings[self._known_words_count :]:
+                self._known_words.update(w.strip(".,") for w in fold(m.surrogate).split())
+            self._known_words_count = len(mappings)
+            self._known_words_version = self.vault.version
+        known_words = self._known_words
+        hints = []
+        for m in _UNLISTED_RE.finditer(scrambled):
+            if skip and any(m.start() < sp.end and sp.start < m.end() for sp in skip):
+                continue
+            phrase = m.group(0).strip(" .,'’")
+            raw_words = phrase.split()
+            if any(any(c.isdigit() for c in w) for w in raw_words):
+                continue
+            if all(w.isupper() for w in raw_words if len(w) > 1):
+                continue
+            key = fold(phrase)
+            words = key.split()
+            if key in known or key in self.allow:
+                continue
+            if all(w.strip(".,") in _COMMON_CAPS or w.strip(".,") in known_words for w in words):
+                continue
+            hints.append(phrase)
+        unique = sorted(set(hints))[:20]
+        if unique:
+            return ["Possible names not in your term lists (left unchanged): " + ", ".join(unique)]
+        return []

@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doublecast"
+dynamic = ["version"]
+description = "Keep your data home. Send its double to the AI: reversible, local scrambling of business data for Claude, ChatGPT, Codex and any LLM."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Mimis Badawy" }]
+requires-python = ">=3.10"
+keywords = [
+    "llm", "privacy", "pii", "anonymization", "pseudonymization", "redaction", "claude", "claude-code",
+    "codex", "openai", "anthropic", "mcp", "proxy", "dlp", "gdpr", "greek",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Office/Business",
+    "Natural Language :: Greek",
+    "Natural Language :: English",
+    "Natural Language :: German",
+    "Natural Language :: French",
+    "Natural Language :: Italian",
+    "Natural Language :: Spanish",
+]
+dependencies = [
+    "pyyaml>=6.0",
+    "cryptography>=42",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
+    "pypdf>=4.0",
+    "httpx>=0.27",
+    "starlette>=0.37",
+    "uvicorn>=0.29",
+    "mcp>=1.2",
+]
+
+[project.optional-dependencies]
+ner = ["gliner>=0.2"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
+
+[project.scripts]
+doublecast = "doublecast.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mimisbadawy78/doublecast"
+Issues = "https://github.com/mimisbadawy78/doublecast/issues"
+
+[tool.hatch.version]
+path = "src/doublecast/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doublecast"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "examples", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]
+ignore = ["E501", "E731", "B008"]

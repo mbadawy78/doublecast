@@ -1,0 +1,30 @@
+name: hr
+title: HR & people
+description: >
+  Employee numbers, payroll references, insurance registration numbers.
+  Names of employees are best listed in your PERSON terms; salaries are
+  covered by money scaling.
+
+patterns:
+  - name: employee_id
+    category: ID
+    regex: '\b(?:employee|emp\.?|staff|personnel|α\.?μ\.?|αριθμός μητρώου|μητρώο|Personalnummer|matricule|matricola|número de empleado)\s*(?:id|no\.?|nr\.?|#|αρ\.?)?\s*[:#]?\s*([A-Z]{0,3}\d{3,})'
+    group: 1
+  - name: greek_efka_ama
+    category: NATIONAL_ID
+    regex: '\b(?:ΑΜΑ|Α\.Μ\.Α\.|αριθμός μητρώου ασφαλισμένου|ΑΜ ΕΦΚΑ|ΑΜ ΙΚΑ)\s*[:#]?\s*(\d{7,10})'
+    group: 1
+    languages: [el]
+  - name: payroll_reference
+    category: ID
+    regex: '\b(?:payslip|payroll|μισθοδοσία|μισθοδοσίας|Lohnabrechnung|fiche de paie|busta paga|nómina)\s*{MARKER}\s*[:#]?\s*([A-Z0-9][A-Z0-9/-]{3,})'
+    group: 1
+  - name: date_of_birth
+    category: DATE
+    regex: '\b(?:date of birth|DOB|born|ημερομηνία γέννησης|ημ\.? γέννησης|γεννήθηκε|Geburtsdatum|geboren|date de naissance|né le|née le|data di nascita|nato il|fecha de nacimiento)\s*[:#]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})'
+    group: 1
+
+money_headers: [salary, wage, pay, gross pay, net pay, bonus, overtime, allowance, commission, μισθός,
+  αποδοχές, μικτά, καθαρά, μπόνους, υπερωρίες, επίδομα, gehalt, lohn, prämie, salaire, prime, stipendio,
+  retribuzione, salario, sueldo, nómina]
+quantity_headers: [hours, ώρες, stunden, heures, ore, horas]

@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store
+
+# Never commit vaults, keys or real configs
+*.vault
+*.vault-wal
+*.vault-shm
+/key
+/config.yaml
+.doublecast/
+*.doublecast.*
+*.restored.*

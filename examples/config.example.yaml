@@ -1,0 +1,38 @@
+# Example Doublecast config for a fictional Greek food manufacturer.
+# Copy to ~/.doublecast/config.yaml and replace with your own lists.
+
+workspace: acme
+mode: warn
+languages: [el, en, de, fr, it, es]
+default_language: en
+packs: [fmcg, finance, hr]
+
+terms:
+  ORG:
+    - Nordia Hellas
+    - value: Kallergis Markets
+      aliases: [Καλλέργης, ΚΑΛΛΕΡΓΗΣ ΑΕΕ]
+    - Brennwald Handel GmbH
+    - Καρανίκας Τρόφιμα
+  PERSON:
+    - Eleni Papadopoulou
+    - Georgios Andreou
+  SITE:
+    - Larissa Plant
+    - Αποθήκη Ασπροπύργου
+  PRODUCT:
+    - Golden Twist 80g
+  PROJECT:
+    - Project Falcon
+
+term_files: [customers.csv]
+
+allow: [Greece, Athens, Europe, EU]
+
+numbers:
+  scale_money: true
+  scale_quantities: false
+  locale: auto
+
+dates:
+  shift: false
