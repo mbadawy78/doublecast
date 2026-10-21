@@ -10,7 +10,7 @@ Thanks for helping. The most valuable contributions, in order:
 ## Setup
 
 ```bash
-git clone https://github.com/mimisbadawy78/doublecast && cd doublecast
+git clone https://github.com/mbadawy78/doublecast && cd doublecast
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest

@@ -7,7 +7,7 @@
 Doublecast swaps your company's sensitive values (customers, suppliers, people, sites, IDs, IBANs, prices, secrets) for realistic stand-ins *before* anything leaves your machine, then puts the real values back into the answer.
 It works with **Claude Code, Codex, claude.ai, ChatGPT, Gemini, any OpenAI- or Anthropic-compatible tool, and your Excel, Word, CSV and PDF files.**
 
-[![CI](https://github.com/mimisbadawy78/doublecast/actions/workflows/ci.yml/badge.svg)](https://github.com/mimisbadawy78/doublecast/actions/workflows/ci.yml)
+[![CI](https://github.com/mbadawy78/doublecast/actions/workflows/ci.yml/badge.svg)](https://github.com/mbadawy78/doublecast/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
 ![Languages](https://img.shields.io/badge/languages-EL%20%C2%B7%20EN%20%C2%B7%20DE%20%C2%B7%20FR%20%C2%B7%20IT%20%C2%B7%20ES-success)
@@ -48,7 +48,7 @@ Doublecast takes a different approach: **consistent, realistic doubles that roun
 ## Install
 
 ```bash
-pip install "doublecast[all] @ git+https://github.com/mimisbadawy78/doublecast"   # Python 3.10+
+pip install "doublecast[all] @ git+https://github.com/mbadawy78/doublecast"   # Python 3.10+
 doublecast init                     # creates ~/.doublecast/{config.yaml, key, vault}
 ```
 

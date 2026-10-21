@@ -210,7 +210,7 @@ def load_config(path: str | Path | None = None, **overrides: Any) -> Config:
 
 CONFIG_TEMPLATE = """\
 # Doublecast configuration
-# Everything here stays on this machine. Docs: https://github.com/mimisbadawy78/doublecast
+# Everything here stays on this machine. Docs: https://github.com/mbadawy78/doublecast
 
 workspace: {workspace}      # separate vault per workspace (client, company, project)
 mode: warn                  # warn = log problems and still send | block = refuse to send
