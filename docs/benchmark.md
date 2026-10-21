@@ -18,9 +18,9 @@ Listed = in the term lists or caught by a pattern detector. Unlisted = a person 
 | UNLISTED_PERSON | 543 | 0 | 0.0% |
 
 - **Round-trip exact restore:** 1653/1653 (100.0%)
-- **Restore after model mangling** (upper-case, possessive, Greek genitive): 3275/3275 (100.0%)
-- **Ratio drift from money scaling** (rounding to cents): max 1.84e-05, mean 1.07e-07
-- **Scramble speed:** 75 KB/s on this machine, starting from an empty vault (12.7s for the whole benchmark)
+- **Restore after model mangling** (upper-case, possessive, Greek genitive): 3316/3316 (100.0%)
+- **Ratio drift from money scaling** (rounding to cents): max 9.21e-06, mean 9.90e-08
+- **Scramble speed:** 60 KB/s on this machine, starting from an empty vault (16.4s for the whole benchmark)
 
 UNLISTED_PERSON uses only a dozen distinct names that are not in any list. Auto mode catches each
 the first time it appears in a greeting, header or after a title, and remembers it, so this row

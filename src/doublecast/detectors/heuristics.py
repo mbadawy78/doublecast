@@ -345,6 +345,25 @@ _CODE_LINE = re.compile(
 _HEADING = re.compile(r"(?m)^[ \t]*#{1,6}[ \t][^\n]*$")
 
 
+_GREEK_SURNAME_END_ARTICLE = tuple(
+    fold(e) for e in ("ου", "ης", "ος", "ας", "η", "ιδη", "ακη", "οπουλο", "ατο", "ιδου", "ιου")
+)
+
+
+_FEMALE_TITLES = re.compile(
+    r"(?i)(?:\b(?:mrs|ms|miss|frau|mme|mlle|sra|sig\.ra)\b|(?<![\w])(?:κα|κας|κυρία|κυρίας)(?![\w]))"
+)
+_MALE_TITLES = re.compile(r"(?i)(?:\b(?:mr|herr|sr|sig)\b|(?<![\w])(?:κος|κο|κε|κύριε|κύριο|κύριος|κυρίου)(?![\w]))")
+
+
+def _title_gender(prefix: str) -> str | None:
+    if _FEMALE_TITLES.search(prefix):
+        return "f"
+    if _MALE_TITLES.search(prefix):
+        return "m"
+    return None
+
+
 def code_regions(text: str) -> list[tuple[int, int]]:
     regions = [m.span() for m in _CODE_FENCE.finditer(text)]
     regions += [m.span() for m in _INLINE_CODE.finditer(text)]
@@ -428,14 +447,17 @@ def detect_structure(text: str, capitalized_phrases: bool = False) -> list[Span]
     spans: list[Span] = []
     code = code_regions(text)
 
-    def add(start: int, name: str, category: str, kind: str, strong: bool = True) -> None:
+    def add(start: int, name: str, category: str, kind: str, strong: bool = True, gender: str | None = None) -> None:
         cleaned = _clean(name)
         if not cleaned:
             return
         s = text.find(cleaned, start)
         if s < 0:
             return
-        spans.append(Span(s, s + len(cleaned), category, cleaned, "heuristic", kind=kind, meta={"strong": strong}))
+        meta = {"strong": strong}
+        if gender:
+            meta["gender"] = gender  # "Ms Vlachaki" gets a woman's surname
+        spans.append(Span(s, s + len(cleaned), category, cleaned, "heuristic", kind=kind, meta=meta))
 
     def weak(start: int, end: int, category: str, kind: str, confidence: float) -> None:
         name = _clean(text[start:end])
@@ -458,9 +480,17 @@ def detect_structure(text: str, capitalized_phrases: bool = False) -> list[Span]
         for pm in _HEADER_PERSON.finditer(m.group("value")):
             add(value_start + pm.start("name"), pm.group("name"), _person_or_org(pm.group("name")), "email_header")
     for m in _GREETING.finditer(text):
-        add(m.start("name"), m.group("name"), "PERSON", "greeting")
+        add(
+            m.start("name"),
+            m.group("name"),
+            "PERSON",
+            "greeting",
+            gender=_title_gender(text[m.start() : m.start("name")]),
+        )
     for m in _TITLE.finditer(text):
-        add(m.start("name"), m.group("name"), "PERSON", "title")
+        add(
+            m.start("name"), m.group("name"), "PERSON", "title", gender=_title_gender(text[m.start() : m.start("name")])
+        )
     for m in _SIGNOFF.finditer(text):
         add(m.start("name"), m.group("name"), "PERSON", "signoff")
     for m in _LEGAL.finditer(text):
@@ -485,7 +515,8 @@ def detect_structure(text: str, capitalized_phrases: bool = False) -> list[Span]
                 continue
             # Greek nouns after an article are lower case, so a capital already says "proper noun";
             # only very frequent words (zipf >= 4.5) are let through as vocabulary
-            if is_first_name(w) or _zipf(w, "el") < 4.5:
+            # and it must end like a Greek name: "στο Κρουασάν", "η Μπουγάτσα" are products, not people
+            if is_first_name(w) or (_zipf(w, "el") < 4.5 and fold(w).endswith(_GREEK_SURNAME_END_ARTICLE)):
                 weak(m.start("name"), m.end("name"), "PERSON", "greek_article", 0.5)
         for m in _CAPS.finditer(text):
             if _inside(headings, m.start(), m.end()):
@@ -495,7 +526,10 @@ def detect_structure(text: str, capitalized_phrases: bool = False) -> list[Span]
             if all(w in _COMMON_CAPS or w in STOP_NAMES or w in BUSINESS_WORDS for w in words):
                 continue
             raw_words = name.split()
-            if not any(is_first_name(w) for w in raw_words) and all(is_common_word(w) for w in raw_words):
+            has_first = any(is_first_name(w) for w in raw_words)
+            if is_greek(name) and not has_first:
+                continue  # Greek capitalises products and places too ("Κρουασάν Βουτύρου"): needs a first name
+            if not has_first and all(is_common_word(w) for w in raw_words):
                 continue  # "Annual Leave Policy", "Πρόγραμμα Εκπαίδευσης": vocabulary, not a name
             if any(w in DEPARTMENTS for w in words):
                 continue

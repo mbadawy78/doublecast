@@ -12,7 +12,7 @@ only email structure, company legal forms, the capitalised-name net and self-lea
 | seen before, mentioned later without structure | 600 | 0 | 0.0% |
 | new name mid-sentence (broad net) | 600 | 0 | 0.0% |
 | new name at sentence start, common first name | 600 | 0 | 0.0% |
-| new name at sentence start, uncommon first name (known gap) | 600 | 599 | 99.8% |
+| new name at sentence start, uncommon first name (known gap) | 600 | 506 | 84.3% |
 
 **Over-protection** (held-out phrases): 1 of 10 ordinary capitalised business phrases were swapped too (Purchase Requisition). No privacy cost, but the AI reads an invented name where an ordinary phrase was, which can confuse its answer. Set `auto.capitalized_phrases: false` to trade some recall for cleaner text.
 

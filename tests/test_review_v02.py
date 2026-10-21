@@ -350,3 +350,72 @@ def test_role_nouns_are_not_learned(tmp_path, text):
 
 def test_greek_driver_header():
     assert classify_header("Οδηγός", "Δρομολόγια")[0] == "PERSON"
+
+
+# ---------------------------------------------------------------- realistic doubles (user report: "looks like an anagram")
+def _real_words():
+    from doublecast.data import realnames as R
+
+    words = set()
+    for table in (R.FIRST, R.LAST):
+        for byg in table.values():
+            for names in byg.values():
+                words.update(w.casefold() for n in names for w in n.replace("-", " ").split())
+    words.update(w.casefold() for w in R.BRAND_WORDS + R.GREEK_TOWNS + R.GREEK_STREETS)
+    return words
+
+
+SAMPLE_EMAIL = """From: Eleni Papadopoulou <e.papadopoulou@masoutis.gr>
+To: Nikos Andreou <n.andreou@alfapastry.com>
+
+Αγαπητέ κ. Ανδρέου,
+
+Η Μασούτης ΑΕ ζητά 12% έκπτωση στο Κρουασάν Βουτύρου 80g για το Q4.
+Ms Vlachaki from Lidl Hellas EPE will call Tuesday.
+
+Με εκτίμηση,
+Ελένη Παπαδοπούλου"""
+
+
+def test_doubles_are_real_names_with_gender_and_matching_email(tmp_path):
+    from doublecast.data.realnames import GREEK_FEMALE, GREEK_FROM_LATIN, GREEK_SURNAMES_F, translit_name
+
+    e = _engine(tmp_path, capitalized_phrases=True)
+    r = e.scramble(SAMPLE_EMAIL)
+    out = r.text
+    assert e.restore(out) == SAMPLE_EMAIL
+    reps = {orig: new for _, orig, new in r.replacements}
+    real = _real_words()
+    for orig, new in reps.items():
+        if "@" in new or any(c.isdigit() for c in new):
+            continue
+        for w in new.split():
+            if w in ("ΑΕ", "EPE", "Hellas", "Ms", "κ."):
+                continue
+            assert w.casefold() in real, (orig, new)  # no invented syllable names
+    # women stay women
+    eleni = reps["Eleni Papadopoulou"]
+    assert eleni.split()[0] in [translit_name(n) for n in GREEK_FEMALE]
+    assert eleni.split()[1] in [translit_name(n) for n in GREEK_SURNAMES_F]
+    assert reps["Vlachaki"] in [translit_name(n) for n in GREEK_SURNAMES_F]
+    # the same person in Greek letters gets the same double, in Greek letters
+    assert reps["Ελένη Παπαδοπούλου"] == " ".join(GREEK_FROM_LATIN[w] for w in eleni.split())
+    # the email follows the person and the company
+    first, last = eleni.lower().split()
+    assert f"{first[0]}.{last}@" in out
+    # the product is not a person, the legal form stays, the first name is never kept
+    assert "Κρουασάν Βουτύρου" in out and "Hellas EPE" in out
+    assert not reps["Nikos Andreou"].startswith("Nikos")
+    e.vault.close()
+
+
+def test_german_and_italian_names_stay_in_their_language(tmp_path):
+    from doublecast.data import realnames as R
+
+    e = _engine(tmp_path)
+    r = e.scramble("Dear Mr Weber,\nplease ask Frau Sabine Hoffmann.\nKind regards,\nGiulia Ferrari")
+    reps = {orig: new for _, orig, new in r.replacements}
+    assert reps["Weber"] in R.DE_SURNAMES
+    assert reps["Sabine Hoffmann"].split()[0] in R.DE_FEMALE
+    assert reps["Giulia Ferrari"].split()[0] in R.IT_FEMALE
+    e.vault.close()

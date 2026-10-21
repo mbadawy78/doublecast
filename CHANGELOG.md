@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.1 (2026-10-21)
+
+Doubles that read like real people and companies.
+
+- Large pools of real first names and surnames in Greek, English, German, French, Italian and
+  Spanish; no more syllable-made names ("Λορούλης", "Quorory Rivory").
+- Gender is kept (from the first name or the title: Ms, κα, Frau...), Greek women get feminine
+  surnames, and the language of the name is kept (a German stays German).
+- The same person written in Greek and in Latin letters gets one double in both scripts.
+- Email addresses follow the person and the company (e.papadopoulou@masoutis.gr ->
+  a.angelopoulou@apostolidis.gr).
+- Companies keep their generic words and legal form ("Lidl Hellas EPE" -> "Thornfield Hellas EPE");
+  Greek companies get Greek surname-style names that decline like the original.
+- Products in Greek ("στο Κρουασάν Βουτύρου") are no longer mistaken for people.
+- A double never reuses the original's first name.
+
 ## 0.2.0 (2026-10-15)
 
 No lists needed.

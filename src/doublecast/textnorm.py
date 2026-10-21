@@ -121,6 +121,18 @@ def split_ending(word: str) -> tuple[str, str]:
     return word[: len(st)], fw[len(st) :]
 
 
+_ACCENTED = set("άέήίόύώΐΰ")
+_ACCENT_OF = dict(zip("αεηιουω", "άέήίόύώ", strict=True))
+
+
+def _accent(ending: str) -> str:
+    i = 1 if ending[:2] in ("ου", "αι", "ει", "οι") else 0
+    for j in range(i, len(ending)):
+        if ending[j] in _ACCENT_OF:
+            return ending[:j] + _ACCENT_OF[ending[j]] + ending[j + 1 :]
+    return ending
+
+
 def inflect(word: str, ending: str) -> str:
     """Put a folded Greek ending onto a word (or the first word of a phrase)."""
     if not ending:
@@ -133,6 +145,8 @@ def inflect(word: str, ending: str) -> str:
         return word  # already in that form: keep it untouched (accents included)
     if ending.endswith("σ"):
         ending = ending[:-1] + "ς"  # final sigma
+    if not any(c in _ACCENTED for c in stem.lower()) and any(c in _ACCENTED for c in word.lower()):
+        ending = _accent(ending)  # the stress was on the ending: Καραλής -> Καραλή, not Καραλη
     letters = [c for c in word if c.isalpha()]
     if letters and all(c.isupper() for c in letters):
         return stem + ending.upper()

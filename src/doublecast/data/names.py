@@ -471,6 +471,16 @@ ORG_TAIL = {
 }
 
 LEGAL_FORMS = [
+    "AE",
+    "A.E",
+    "AEBE",
+    "ABEE",
+    "EPE",
+    "E.P.E.",
+    "OE",
+    "EE",
+    "ΑΕΒΕ",
+    "Ltda",
     "S.A.",
     "SA",
     "A.E.",
@@ -601,10 +611,20 @@ GREEK_TAIL_BY_ENDING = {
     "οι": ["ίνοι", "άτοι"],
 }
 
+
 # Common first names used only to RECOGNISE a lone first name ("Dear Petros,").
 # Doubles are still drawn from FIRST_NAMES above.
+def _real_first_names() -> set[str]:
+    from .realnames import FIRST
+
+    # first names that are also everyday words or brands are not used to *recognise* names
+    ambiguous = {"Jack", "Christian", "Frank", "Mercedes", "Aurora", "Alba", "Victoria", "Hope", "Grace", "Chance"}
+    return {n for byg in FIRST.values() for names in byg.values() for n in names} - ambiguous
+
+
 RECOGNISED_FIRST_NAMES = sorted(
     {n for lst in FIRST_NAMES.values() for n in lst}
+    | _real_first_names()
     | set(
         """Petros Pavlos Michalis Apostolos Ilias Evangelos Vangelis Antonis Stavros Tasos Thanasis Fotis Lambros
         Sotiris Yannis Yiannis Giorgos George Kostas Kosta Dimitra Despina Panagiota Konstantina Stella Marina

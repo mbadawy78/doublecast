@@ -128,6 +128,14 @@ _FIRST_NAME_KEYS = {fold(n) for n in RECOGNISED_FIRST_NAMES}
 _CAP_RUN = re.compile(r"(?<![\w'’\-])[^\W\d_][\w'’\-]*(?:[ \t]+[^\W\d_][\w'’\-]*){0,3}")
 
 
+def _latin_key(word: str) -> str:
+    """How a name is spelled in an email address: Παπαδοπούλου -> papadopoulou, Müller -> muller."""
+    from .data.realnames import strip_accents, translit
+
+    w = translit(word) if is_greek(word) else strip_accents(word).lower()
+    return re.sub(r"[^a-z0-9]", "", w)
+
+
 def _word_root(folded_word: str) -> str:
     stem = greek_stem(folded_word)
     return stem or folded_word
@@ -179,6 +187,12 @@ class Engine:
         self._recent_terms: list = []
         self._just_learned: list[tuple[str, str]] = []
         self._homonym_keys: dict[str, str] = {}
+        self._email_people: dict[str, tuple[str, str]] = {}
+        self._email_first: dict[str, str] = {}
+        self._email_orgs: dict[str, str] = {}
+        self._email_index_count = 0
+        self._script_twins: dict[str, tuple[str, bool]] = {}
+        self._used_twin = False
         self._homonym_count = 0
         self.recent_dictionary: DictionaryDetector | None = None
         self.terms = self._all_terms()
@@ -450,12 +464,17 @@ class Engine:
         existing = self.vault.get(original)
         if existing:
             return existing
+        twin = self._other_script_twin(category, original)
         for attempt in range(40):
-            candidate = self.factory.make(category, original, attempt)
+            candidate = twin if (attempt == 0 and twin) else self.factory.make(category, original, attempt)
+            self._used_twin = bool(twin) and attempt == 0
             key = fold(candidate)
             if key == fold(original) or key in self._term_values or self.vault.surrogate_taken(candidate):
                 continue
-            own = {_word_root(w) for w in fold(original).split()}  # shared words like "Project", "Plant" are fine
+            own_folded = fold(original).split()
+            if category == "PERSON" and set(key.split()) & {w for w in own_folded if len(w) >= 3}:
+                continue  # "Nikos Andreou" must not become "Nikos Athanasiou"
+            own = {_word_root(w) for w in own_folded} | set(own_folded)  # shared words like "Project", "Plant" are fine
             if self._context and any(
                 w not in own and (w in self._context or _word_root(w) in self._context)
                 for w in key.split()
@@ -472,6 +491,8 @@ class Engine:
             ):
                 continue  # a double must never look like (an inflection of) another real listed name
             stored = self.vault.put(category, original, candidate)
+            if stored != candidate:
+                self._used_twin = False
             if category == "PERSON":
                 self._register_surname(original, stored)
             return stored
@@ -482,6 +503,92 @@ class Engine:
             if not self.vault.surrogate_taken(fallback):
                 return self.vault.put(category, original, fallback)
             n += 1
+
+    # ------------------------------------------------------------ emails that match their person
+    def _name_index(self) -> None:
+        """Latin spelling of each real name word -> Latin spelling of its double, so
+        e.papadopoulou@masoutis.gr can become f.theodoridou@doukas.gr."""
+        maps = self.vault.mappings()
+        if self._email_index_count == len(maps):
+            return
+        for m in maps[self._email_index_count :]:
+            if m.category not in ("PERSON", "ORG", "PERSON_PART"):
+                continue
+            self._script_twins.setdefault(
+                " ".join(_latin_key(w) for w in m.original.split()), (m.surrogate, is_greek(m.original))
+            )
+            ow = [_latin_key(w) for w in split_legal_form(m.original)[0].split()]
+            dw = [_latin_key(w) for w in split_legal_form(m.surrogate)[0].split()]
+            if not ow or not dw:
+                continue
+            if m.category == "PERSON_PART":
+                continue
+            if m.category == "PERSON":
+                if len(ow) >= 2 and len(dw) >= 2:
+                    self._email_people.setdefault(ow[-1], (dw[0], dw[-1]))
+                    self._email_people.setdefault(ow[0], (dw[0], dw[-1]))
+                    self._email_first.setdefault(ow[0], dw[0])
+                elif len(ow) == 1:
+                    self._email_people.setdefault(ow[0], ("", dw[-1]))
+            else:
+                self._email_orgs.setdefault("".join(ow), "".join(dw))
+                self._email_orgs.setdefault(ow[0], dw[0])
+        self._email_index_count = len(maps)
+
+    def _email_stand_in(self, original: str) -> str:
+        existing = self.vault.get(original)
+        if existing:
+            return existing
+        self._name_index()
+        local, _, domain = original.partition("@")
+        tokens = re.split(r"([._\-])", local)
+        words = [t for t in tokens if t and t not in "._-"]
+        person = next((self._email_people[_latin_key(t)] for t in words if _latin_key(t) in self._email_people), None)
+        if person:
+            first, last = person
+            out = []
+            for t in tokens:
+                k = _latin_key(t)
+                if not t or t in "._-":
+                    out.append(t)
+                elif k in self._email_people and self._email_people[k] == person:
+                    out.append(last if k not in self._email_first else (first or last))
+                elif len(t) <= 2 and first:
+                    out.append(first[: len(t)])
+                else:
+                    out.append(_latin_key(self.factory.make("PERSON", t)).split()[0] if t.isalpha() else t)
+            new_local = "".join(out)
+            labels = domain.split(".")
+            stem = labels[-2] if len(labels) >= 2 else labels[0]
+            if stem.lower() in self._email_orgs:
+                labels[-2 if len(labels) >= 2 else 0] = self._email_orgs[stem.lower()]
+                new_domain = ".".join(labels)
+            else:
+                new_domain = self.factory.make("EMAIL", original).partition("@")[2]
+            candidate = f"{new_local}@{new_domain}"
+            if candidate.lower() != original.lower() and not self.vault.surrogate_taken(candidate):
+                return self.vault.put("EMAIL", original, candidate)
+        return self.stand_in("EMAIL", original)
+
+    def _other_script_twin(self, category: str, original: str) -> str | None:
+        """Ελένη Παπαδοπούλου and Eleni Papadopoulou are one person: give them one double,
+        in each one's own script (Πολυξένη Χριστοδούλου / Polyxeni Christodoulou)."""
+        if category not in ("PERSON", "ORG"):
+            return None
+        from .data.realnames import GREEK_FROM_LATIN, translit_name
+
+        self._name_index()
+        key = " ".join(_latin_key(w) for w in original.split())
+        hit = self._script_twins.get(key)
+        if not hit:
+            return None
+        double, greek = hit
+        if greek == is_greek(original):
+            return None
+        if not is_greek(original):
+            return translit_name(double)
+        words = [GREEK_FROM_LATIN.get(w) for w in double.split()]
+        return " ".join(words) if all(words) else None
 
     def _register_surname(self, original: str, surrogate: str) -> None:
         o_words, s_words = original.split(), surrogate.split()
@@ -504,7 +611,8 @@ class Engine:
         replacements: list[tuple[int, int, str]] = []
         log_rows: list[tuple[str, str, str]] = []
         kept: list[Span] = []
-        for span in spans:
+        # people and companies first, so an email can be built from their doubles
+        for span in sorted(spans, key=lambda sp: sp.category == "EMAIL"):
             if span.action == "redact":
                 new = f"[REDACTED:{span.kind or 'secret'}]"
             elif span.action in ("money", "quantity", "date"):
@@ -516,9 +624,17 @@ class Engine:
                     self.vault.try_put("DATE", span.text, new)
             else:
                 canonical = span.meta.get("canonical", span.text)
-                new = self.stand_in(span.category, canonical)
-                endings = span.meta.get("endings")
-                if not endings and span.detector == "heuristic" and is_greek(span.text):
+                self._used_twin = False
+                if span.category == "EMAIL":
+                    new = self._email_stand_in(canonical)
+                else:
+                    self.factory.gender_hint = span.meta.get("gender")
+                    try:
+                        new = self.stand_in(span.category, canonical)
+                    finally:
+                        self.factory.gender_hint = None
+                endings = None if self._used_twin else span.meta.get("endings")
+                if not endings and not self._used_twin and span.detector == "heuristic" and is_greek(span.text):
                     endings = word_endings(fold(span.text))  # "κ. Σταματόπουλο" -> "κ. Ηλιόπουλο"
                 if endings:
                     new = inflect_words(new, endings)  # keep Greek grammar: της Καρανίκα -> της Σολίκα
