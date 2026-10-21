@@ -169,7 +169,8 @@ _SIGNOFF = re.compile(
 _LEGAL = re.compile(
     rf"{_B}(?P<name>(?:[{_UP}]\.[ \t]*)*(?:{_NAME_WORD}|[{_UP}]{{2,}})(?:[ \t]+(?:&[ \t]+)?(?:{_NAME_WORD}|[{_UP}]{{2,}}|[{_UP}]\.)){{0,4}})"
     r"[ \t]*,?[ \t]+(?P<form>S\.A\.|SA|A\.E\.|AEBE|ABEE|AE|EPE|IKE|ΑΕ|Α\.Ε\.|ΑΕΒΕ|ΑΒΕΕ|Α\.Β\.Ε\.Ε\.|ΕΠΕ|Ε\.Π\.Ε\.|ΙΚΕ|Ι\.Κ\.Ε\.|Ο\.Ε\.|"
-    r"Ltd\.?|Limited|LLC|Inc\.?|Corp\.?|PLC|GmbH|AG|KG|SAS|SARL|S\.p\.A\.|SpA|S\.r\.l\.|Srl|S\.L\.|B\.V\.|N\.V\.)(?![\w])"
+    r"Ltd\.?|Limited|LLC|Inc\.?|Corp\.?|PLC|plc|GmbH|AG|KG|SAS|SARL|S\.p\.A\.|SpA|S\.r\.l\.|Srl|S\.L\.|S\.A\.S\.|"
+    r"B\.V\.|BV|N\.V\.|NV|e\.K\.|AB|OÜ|Oy|A/S|ApS|Sp\. z o\.o\.|Ltda\.?|Kft\.?|s\.r\.o\.|d\.o\.o\.)(?![\w])"
 )
 _CAPS = re.compile(
     rf"(?:(?<=[{_LOW},;:(\"'|] )|(?<=[,;|\t])|(?<=^[-•*] )|(?<=\n[-•*] ))(?P<name>{_NAME_WORD}(?:[ \t]+{_NAME_WORD}){{1,3}})"
@@ -443,6 +444,164 @@ def learnable(category: str, value: str, kind: str = "") -> bool:
     return True
 
 
+# ---------------------------------------------------------------- names with weaker clues
+_SPEAKER = re.compile(
+    r"(?m)^[ \t]*(?:\[?\d{1,2}[:.]\d{2}(?::\d{2})?\]?[ \t]*)?(?:\d{1,2}\.[ \t]+)?"
+    r"(?P<name>[^\W\d_][\w'’.\-]*(?:[ \t][^\W\d_][\w'’.\-]*){0,2}):[ \t]"
+)
+_NOT_SPEAKER = {
+    fold(w)
+    for w in """from to cc bcc subject date re fw fwd sent note notes action actions decision decisions next steps
+    update status todo ps nb q a summary agenda attendees present apologies owner deadline result results issue
+    issues risk risks comment comments answer question reply reason problem fix total subtotal price prices
+    από προς θέμα κοιν ημερομηνία σημείωση σημειώσεις απόφαση αποφάσεις παρόντες εκκρεμότητες θέματα
+    von an betreff datum de à objet date da a oggetto para asunto fecha""".split()
+}
+_INITIAL_SURNAME = re.compile(rf"(?<![\w.])[{_UP}]\.[ \t]?(?P<name>{_NAME_WORD})")
+_FIRST_INITIAL = re.compile(rf"(?<![\w'’\-])(?P<first>{_NAME_WORD})[ \t](?P<init>[{_UP}])\.?(?![\w'’\-])")
+_SURNAME_FIRST = re.compile(
+    rf"(?m)(?:^|(?<=[\n.:;,(]\s)|(?<=\n))[ \t]*(?P<last>{_NAME_WORD})[ \t]+(?P<first>{_NAME_WORD})(?![\w'’\-])"
+)
+_LONE_CAP = re.compile(
+    rf"(?:(?<=[{_LOW},;:(] )|(?<=[{_LOW}] \()|(?<=\bwith )|(?<=\bby ))(?P<name>{_NAME_WORD})(?![\w'’\-])(?![ \t]*{_NAME_WORD})"
+)
+_LOWER_WORD = re.compile(rf"(?<![\w@.'’\-])(?P<w>[{_LOW}]{{3,}})(?![\w@'’\-])")
+_GREEK_NAME_SUFFIX = tuple(
+    fold(e)
+    for e in (
+        "ίδης",
+        "ίδη",
+        "ίδου",
+        "άκης",
+        "άκη",
+        "άκου",
+        "όπουλος",
+        "όπουλο",
+        "οπούλου",
+        "όγλου",
+        "ιάδης",
+        "ιάδη",
+        "ιάδου",
+    )
+)
+_ORGISH = re.compile(
+    r"(?i)(?:line|hill|way|tech|flex|via|ford|wood|field|moor|shaw|ton|dale|gate|port|mark|cold|frost|max)$"
+)
+
+
+_GERMAN_WORDS = re.compile(
+    r"(?i)(?<![\w])(?:der|die|das|und|ist|nicht|mit|für|wir|sie|bitte|auf|bei|noch|auch)(?![\w])"
+)
+
+# Towns that show up in Greek and Cypriot business text; places are not secrets
+_PLACES = {
+    fold(w)
+    for w in """
+    Κοζάνη Πτολεμαΐδα Θεσσαλονίκη Πάτρα Λάρισα Ηράκλειο Βόλος Ιωάννινα Χανιά Ρόδος Καβάλα Σέρρες Δράμα Ξάνθη
+    Κομοτηνή Αλεξανδρούπολη Κατερίνη Βέροια Καστοριά Φλώρινα Γρεβενά Τρίκαλα Καρδίτσα Λαμία Χαλκίδα Θήβα
+    Λιβαδειά Καλαμάτα Τρίπολη Σπάρτη Ναύπλιο Κόρινθος Πύργος Αγρίνιο Μεσολόγγι Πρέβεζα Άρτα Κέρκυρα Ζάκυνθος
+    Κεφαλονιά Ρέθυμνο Μυτιλήνη Χίος Σάμος Σύρος Ασπρόπυργος Ελευσίνα Μαγούλα Σχηματάρι Οινόφυτα Σίνδος
+    Καλοχώρι Πειραιάς Μαρούσι Κηφισιά Γλυφάδα Λεμεσός Λευκωσία Λάρνακα Πάφος Αμμόχωστος Κιλκίς Έδεσσα Νάουσα
+    Kozani Ptolemaida Thessaloniki Patra Patras Larissa Heraklion Volos Ioannina Chania Rhodes Kavala Serres
+    Drama Xanthi Komotini Alexandroupoli Katerini Veria Kastoria Florina Trikala Karditsa Lamia Chalkida
+    Kalamata Tripoli Sparta Nafplio Corinth Agrinio Preveza Corfu Zakynthos Kefalonia Rethymno Mytilene Chios
+    Samos Syros Aspropyrgos Elefsina Magoula Schimatari Oinofyta Sindos Kalochori Piraeus Marousi Kifisia
+    Glyfada Limassol Nicosia Larnaca Pafos Paphos Famagusta Kilkis Edessa Naoussa
+    """.split()
+}
+_PLACE_STEMS = {st for p in _PLACES if (st := greek_stem(p))}
+
+
+def _after_lowercase(text: str, i: int) -> bool:
+    j = i - 1
+    while j >= 0 and text[j] in " \t":
+        j -= 1
+    return j >= 0 and (text[j].islower() or text[j] in ",;(")
+
+
+def _rare(word: str) -> bool:
+    """Not ordinary vocabulary in any of our languages (rarer than 'turnover' by far)."""
+    w = word.lower().strip(".,'’")
+    f = fold(w)
+    if f in BUSINESS_WORDS or f in _COMMON_CAPS or f in STOP_NAMES or f in _PLACES:
+        return False
+    if is_greek(f) and (st := greek_stem(f)) and st in _PLACE_STEMS:
+        return False  # "Κοζάνης", "στη Λάρισα"
+    langs = ("el",) if is_greek(w) else ("en", "de", "fr", "it", "es")
+    return max(_zipf(w, lang) for lang in langs) < (1.8 if is_greek(w) else 2.2)
+
+
+_ORG_WORDS = (
+    r"Logistics|Logistik|Foods?|Dairies|Dairy|Distribution|Distributors?|Supermarkets?|Markets|Trading|Packaging|"
+    r"Group|Holdings|Bakery|Bakeries|Transports?|Cold Chain|Lebensmittel|Backwaren|Kühlhaus|Alimentari|Alimentos|"
+    r"Distribuzione|Distribuciones|Surgelés|Congelados|Frigoríficos|Autotrasporti|Τρόφιμα|Διανομές|Μεταφορές|"
+    r"Αρτοποιία|Αρτοποιεία|Γαλακτοκομική|Υπεραγορές|Ψυκτικές Μεταφορές|Αλευρόμυλοι|Συσκευασίες"
+)
+_ORG_NAMED = re.compile(
+    rf"(?<![\w'’\-])(?P<a>(?:{_NAME_WORD}[ \t]+){{1,2}}(?:{_ORG_WORDS})(?![\w]))"
+    rf"|(?<![\w'’\-])(?P<b>(?:{_ORG_WORDS})[ \t]+{_NAME_WORD}(?:[ \t]+{_NAME_WORD})?)"
+)
+R_GENERIC = {fold(w) for w in _ORG_WORDS.replace("|", " ").split()}
+_FIRST_ANYWHERE = re.compile(rf"(?<![\w'’\-])(?P<name>{_NAME_WORD})(?![\w'’\-])(?![ \t]*{_NAME_WORD})")
+
+
+def _more_names(text: str, weak) -> None:
+    """Chats, minutes and CSVs name people without greetings or titles."""
+    for m in _SPEAKER.finditer(text):  # "callum: morning", "[09:12] Τάκης: καλημερα", "4. Periklis: decision by..."
+        name = m.group("name").strip()
+        words = name.split()
+        if fold(words[0]) in _NOT_SPEAKER or fold(name) in _NOT_SPEAKER or any(fold(w) in DEPARTMENTS for w in words):
+            continue
+        if (
+            any(is_first_name(w) for w in words)
+            or all(_rare(w) for w in words)
+            or (len(words) == 2 and _rare(words[-1]))
+        ):
+            weak(m.start("name"), m.start("name") + len(name), "PERSON", "chat_speaker", 0.6)
+    for m in _INITIAL_SURNAME.finditer(text):  # "P. Kremastioti", "Κ. Καλογήρου"
+        if _rare(m.group("name")) and not is_first_name(m.group("name")):
+            weak(m.start(), m.end("name"), "PERSON", "initial_surname", 0.6)
+    for m in _FIRST_INITIAL.finditer(text):  # "Vyron M.", "Eleftheria Z"
+        if is_first_name(m.group("first")):
+            weak(
+                m.start("first"),
+                m.end("init") + (1 if text[m.end("init") : m.end("init") + 1] == "." else 0),
+                "PERSON",
+                "first_initial",
+                0.6,
+            )
+    for m in _SURNAME_FIRST.finditer(text):  # "Παπαδάκης Θάλεια" (lists, CSV exports)
+        if is_first_name(m.group("first")) and not is_first_name(m.group("last")) and _rare(m.group("last")):
+            weak(m.start("last"), m.end("first"), "PERSON", "surname_first", 0.6)
+    for m in _ORG_NAMED.finditer(text):  # "Crestway Logistics", "Panmaris Foods", "Αλευρόμυλοι Κατσιώτη"
+        g = "a" if m.group("a") else "b"
+        name = m.group(g)
+        words = name.split()
+        if any(_rare(w) and fold(w) not in R_GENERIC for w in words):
+            weak(m.start(g), m.end(g), "ORG", "org_word", 0.6)
+    for m in _FIRST_ANYWHERE.finditer(text):  # "Ιφιγένεια will send it", "Bradley:" — a known first name
+        w = m.group("name")
+        if is_first_name(w) and len(w) >= 4 and (not is_common_word(w) or _after_lowercase(text, m.start("name"))):
+            weak(m.start("name"), m.end("name"), "PERSON", "first_name_anywhere", 0.45)
+    german = len(_GERMAN_WORDS.findall(text)) >= 3  # German capitalises every noun: no lone-capital clue
+    for m in _LONE_CAP.finditer(text):  # "it's with Crestway now", "areti confirmed with Zlatko"
+        w = m.group("name")
+        if german or len(w) < 4 or w.isupper() or not _rare(w):
+            continue
+        greek_name = is_greek(w) and fold(w).endswith(_GREEK_NAME_SUFFIX)
+        if is_greek(w) and not (greek_name or is_first_name(w)):
+            continue  # Greek capitalises products and places too ("Σπανακόπιτα", "Κοζάνη")
+        cat = "PERSON" if is_first_name(w) or greek_name else ("ORG" if _ORGISH.search(w) else "PERSON")
+        weak(m.start("name"), m.end("name"), cat, "lone_capital", 0.4)
+    for m in _LOWER_WORD.finditer(text):  # chats: "ρωτα τον κωστα", "ask grigoris"
+        w = m.group("w")
+        f = fold(w)
+        known_first = f in _FIRST_NAMES and _zipf(w, "el" if is_greek(w) else "en") < 3.0 and len(w) >= 4
+        greek_surname = is_greek(w) and len(w) >= 7 and f.endswith(_GREEK_NAME_SUFFIX) and _zipf(w, "el") < 1.5
+        if (known_first or greek_surname) and not is_common_word(w):
+            weak(m.start("w"), m.end("w"), "PERSON", "lowercase_name", 0.4)
+
+
 def detect_structure(text: str, capitalized_phrases: bool = False) -> list[Span]:
     spans: list[Span] = []
     code = code_regions(text)
@@ -501,6 +660,7 @@ def detect_structure(text: str, capitalized_phrases: bool = False) -> list[Span]
         if not all(w in STOP_NAMES or w in _COMMON_CAPS for w in words):  # "Vertrieb GmbH" is a company
             spans.append(Span(s, e, "ORG", name, "heuristic", kind="legal_form", meta={"strong": True}))
     if capitalized_phrases:
+        _more_names(text, weak)
         headings = [m.span() for m in _HEADING.finditer(text)]
         for m in _FIRST_LAST_AT_START.finditer(text):
             # "Theodora Vlachaki will confirm." at a sentence start: only when the first word is a known first name

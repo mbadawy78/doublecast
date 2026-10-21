@@ -166,8 +166,14 @@ def _clipboard_get() -> str:
     if system == "Darwin":
         return subprocess.run(["pbpaste"], capture_output=True, text=True, check=True).stdout
     if system == "Windows":
+        # UTF-8 both ways, or Greek turns into question marks in Windows PowerShell 5.1
+        script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw"
         return subprocess.run(
-            ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"], capture_output=True, text=True, check=True
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
         ).stdout
     for cmd in (
         ["wl-paste", "--no-newline"],
@@ -185,8 +191,9 @@ def _clipboard_set(text: str) -> None:
         subprocess.run(["pbcopy"], input=text, text=True, check=True)
         return
     if system == "Windows":
+        script = "[Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"
         subprocess.run(
-            ["powershell", "-NoProfile", "-Command", "$input | Set-Clipboard"], input=text, text=True, check=True
+            ["powershell", "-NoProfile", "-Command", script], input=text, text=True, encoding="utf-8", check=True
         )
         return
     for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):

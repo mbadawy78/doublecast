@@ -83,7 +83,10 @@ def parse_number(token: str, locale: str = "auto") -> tuple[Decimal, NumFmt] | N
             dec = last_sep
             th = t[non_digits[0]]
         else:  # one separator, used once
-            if after == 3:
+            head = t[:last].lstrip("-+")
+            if after == 3 and (head.startswith("0") or len(head) > 3):
+                th, dec = None, last_sep  # "0,215" and "1234.567" cannot be thousands groups
+            elif after == 3:
                 if locale == "eu":
                     th, dec = (".", None) if last_sep == "." else (None, ",")
                 elif locale == "us":

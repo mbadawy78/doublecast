@@ -25,6 +25,7 @@ VALIDATORS: dict[str, Callable[[str], bool]] = {
     "amka": lambda s: amka_valid(re.sub(r"\D", "", s)),
     "ean13": lambda s: ean13_valid(re.sub(r"\D", "", s)),
     "dni": dni_valid,
+    "ten_digits": lambda s: len(re.sub(r"\D", "", s)) == 10,
     # loopback, unspecified, netmasks/broadcast and the classic "1.2.3.4" example are not sensitive
     "ip": lambda s: not s.startswith(("0.", "127.", "255.")) and s != "1.2.3.4",
 }
@@ -94,7 +95,31 @@ CORE_PATTERNS: list[PatternSpec] = [
         "PHONE",
         r"(?<![\w+])(?:\+|00)(?:30|44|49|33|39|34|357|1|31|32|43|41|351|353|359|40|48|90)[\s.-]?\(?\d{1,4}\)?(?:[\s.-]?\d{2,4}){2,4}(?!\d)",
     ),
-    _spec("phone_gr_mobile", "PHONE", r"(?<![\d])69\d[\s-]?\d{3}[\s-]?\d{4}(?![\d])", languages=["el"]),
+    # Greek numbers as people write them: 6977 412 390, 697 741 2390, 6977412390, 210 55 92 410, 24610 92 300
+    _spec("phone_gr_mobile", "PHONE", r"(?<![\d.,])69\d(?:[ -]?\d){7}(?!\d)(?![.,]\d)"),
+    _spec(
+        "phone_gr_landline",
+        "PHONE",
+        r"(?<![\d.,/-])2\d{1,4}(?: \d{2,4}){1,3}(?!\d)(?![.,/-]\d)",
+        validator="ten_digits",
+        languages=["el"],
+    ),
+    _spec("phone_uk_mobile", "PHONE", r"(?<![\d.,])07\d{3}[ ]?\d{3}[ ]?\d{3}(?!\d)(?![.,]\d)"),
+    _spec("phone_intl_any", "PHONE", r"(?<![\w+])\+\d{1,3}(?:[ -]?\(?\d{1,4}\)?)(?:[ -]?\d{2,4}){2,4}(?!\d)(?![.,]\d)"),
+    _spec("phone_fr", "PHONE", r"(?<![\d.,])0[1-9](?:[ .]\d{2}){4}(?!\d)(?![.,]\d)"),
+    _spec(
+        "phone_es",
+        "PHONE",
+        r"(?<![\d.,])[6-9]\d{2}(?: \d{2}){3}(?!\d)(?![.,]\d)|(?<![\d.,])[6-9]\d{2} \d{3} \d{3}(?!\d)(?![.,]\d)",
+    ),
+    _spec("phone_it", "PHONE", r"(?<![\d.,])0\d{1,3} \d{3} \d{3,4}(?!\d)(?![.,]\d)"),
+    _spec(
+        "phone_gr_compact",
+        "PHONE",
+        r"(?<![\d.,])2\d{9}(?!\d)(?![.,]\d)",
+        context=_PHONE_CONTEXT + [":", "στο", "at"],
+        window=30,
+    ),
     _spec(
         "phone_with_context",
         "PHONE",
@@ -110,7 +135,19 @@ CORE_PATTERNS: list[PatternSpec] = [
         context=["αφμ", "α.φ.μ", "afm", "vat", "φπα", "tin", "tax id", "tax no", "αριθμός φορολογικού"],
         languages=["el"],
     ),
-    _spec("greek_vat_prefixed", "TAX_ID", r"(?<![\w])EL\d{9}(?![\d])", validator="afm", languages=["el"]),
+    _spec("greek_vat_prefixed", "TAX_ID", r"(?<![\w])EL\d{9}(?![\d])"),
+    # a number right after a tax label is a tax number, checksum or not (typos and test data included)
+    _spec(
+        "tax_labelled",
+        "TAX_ID",
+        r"(?i)(?:\bα\.?φ\.?μ\.?|\bafm|\bvat(?:\s*(?:no|number|reg(?:istration)?(?:\s*no)?)\.?)?|\btin|\bein|ust-?id(?:nr)?\.?|"
+        r"\btva|p\.?\s?iva|partita iva|\bnif|\bcif|\bsiret|\bsiren|tax id|tax no\.?)\s*[:#]?\s*"
+        r"((?:[A-Z]{2}[ ]?)?[A-Z]?\d[\d -]{6,16}\d[A-Z]?)(?![\w])",
+        group=1,
+    ),
+    _spec("gb_vat", "TAX_ID", r"(?<![\w])GB[ ]?\d{3}[ ]?\d{4}[ ]?\d{2}(?![\d])"),
+    _spec("se_vat", "TAX_ID", r"(?<![\w])SE\d{10}01(?![\d])"),
+    _spec("es_cif", "TAX_ID", r"(?<![\w])[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J](?![\w])"),
     _spec(
         "eu_vat",
         "TAX_ID",
@@ -158,6 +195,31 @@ CORE_PATTERNS: list[PatternSpec] = [
         "NATIONAL_ID",
         r"(?i)\b(?:passport|διαβατήριο|διαβατηρίου|reisepass|passeport|passaporto|pasaporte)\b\s*(?:no\.?|number|αρ\.?|nr\.?|n°|núm\.?)?\s*[:#]?\s*([A-Z0-9]{6,9})\b",
         group=1,
+    ),
+    # street addresses: a street word, a name, a number, then optionally a postcode and town
+    _spec(
+        "address_gr",
+        "ADDRESS",
+        r"(?:(?<![\w])(?:Λεωφ\.|Λεωφόρος|Λ\.|Οδός|οδός|Οδ\.|Πλατεία|Πλ\.|Βι\.?Πε\.?|Θέση|Ακτή|Παραλία)"
+        r"[ \t]+[^\n,;()]{2,40}?|(?<![\w])[Α-ΩΆΈΉΊΌΎΏ][α-ωάέήίόύώϊϋΐΰς]{2,}(?:[ \t][Α-ΩΆΈΉΊΌΎΏ][α-ωάέήίόύώϊϋΐΰς]+)?)"
+        r"[ \t]+\d{1,4}[Α-Ωα-ω]?(?:[ \t]*,[ \t]*(?:Τ\.?Κ\.?[ \t]*)?\d{3}[ ]?\d{2}(?:[ \t]+[Α-ΩΆΈΉΊΌΎΏ][\wά-ώ.\-]+)+)",
+    ),
+    _spec(
+        "address_gr_street",
+        "ADDRESS",
+        r"(?<![\w])(?:Λεωφ\.|Λεωφόρος|Λ\.|Οδός|Οδ\.|Πλατεία|Βι\.?Πε\.?|Ακτή)[ \t]+[Α-ΩΆΈΉΊΌΎΏ][^\n,;()]{1,40}?[ \t]+\d{1,4}(?![\d.,])",
+    ),
+    _spec(
+        "address_latin",
+        "ADDRESS",
+        r"(?<![\w])(?:(?:Unit|Suite|Flat)[ \t]+\d+[A-Z]?[ \t,]+)?"
+        r"(?:\d{1,5}[ \t]+(?:[A-Z][\w'’.\-]*[ \t]+){1,4}(?:Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Drive|Dr\.?|Lane|Ln\.?|"
+        r"Way|Boulevard|Blvd\.?|Place|Pl\.?|Court|Ct\.?|Estate|Park|Square|Sq\.?)(?![\w])"
+        r"|(?:[A-Z][\w'’.\-]*[ \t]+){1,4}(?:Industrial Estate|Business Park|Trading Estate|Street|Road|Avenue|Lane)(?![\w])"
+        r"|(?:Via|Viale|Piazza|Corso|Calle|Avenida|Av\.|Paseo|Rue|Avenue|Boulevard|Bd|Chemin|Allée)[ \t]+(?:[\w'’.\-]+[ \t]+){0,4}?\d{1,4}"
+        r"|[A-ZÄÖÜ][\wäöüß\-]*(?:straße|strasse|str\.|weg|platz|allee|gasse|ring|dijk|straat|laan|gatan|vägen|plein)[ \t]+\d{1,4}[a-z]?)"
+        r"(?:[ \t]*,[ \t]*(?:[A-Z]{1,2}\d[A-Z\d]?[ ]?\d[A-Z]{2}|\d{3,5}(?:[ ]?[A-Z]{2})?|\d{3}[ ]\d{2})?[ \t]*[A-Z][\w\-]+(?:[ \t]+[A-Z][\w\-]+)?(?:[ \t]+[A-Z]{1,2}\d[A-Z\d]?[ ]?\d[A-Z]{2})?)?"
+        r"(?:,[ \t]*[A-Z]{2}[ \t]+\d{5})?",
     ),
     _spec(
         "ipv4",
@@ -209,6 +271,12 @@ IBAN_LENGTHS = {
 _IBAN_CANDIDATE = re.compile(r"(?<![A-Z0-9])([A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30})", re.IGNORECASE)
 
 
+def _plausible_bban(candidate: str) -> bool:
+    compact = candidate.replace(" ", "")
+    digits = sum(c.isdigit() for c in compact[4:])
+    return digits >= len(compact[4:]) * 0.6 and compact[:2].isalpha() and compact[:2].isupper()
+
+
 def detect_ibans(text: str) -> list[Span]:
     spans: list[Span] = []
     for m in _IBAN_CANDIDATE.finditer(text):
@@ -232,7 +300,8 @@ def detect_ibans(text: str) -> list[Span]:
             nxt = raw[end_idx : end_idx + 1]
             if nxt and nxt.isalnum():
                 continue
-            if iban_valid(candidate):
+            # a typo or a test value with a wrong check digit is still someone's bank account shape
+            if iban_valid(candidate) or (expected and candidate[2:4].isdigit() and _plausible_bban(candidate)):
                 s = m.start(1)
                 spans.append(Span(s, s + end_idx, "IBAN", candidate, "pattern", kind="iban"))
                 break

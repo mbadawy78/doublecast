@@ -1,12 +1,16 @@
 """Power BI semantic models (datasets), read with DAX through the REST API.
 
 Requirements (set by a Power BI admin): the tenant setting "Dataset Execute
-Queries REST API" must be on, and you need Read + Build on the dataset.
+Queries REST API" (admin portal, Integration settings) must be on, and you
+need Read + Build on the dataset. Limits: 100,000 rows or 1,000,000 values
+per query, 120 queries per minute per user.
 
-Finding the tables: the Execute Queries API does not allow INFO functions
-or DMVs, so Doublecast asks the model for COLUMNSTATISTICS(), a regular DAX
-function that lists every table and column. If a model refuses it, list
-the tables you care about in the config (`tables: [Customers, Products]`).
+Finding the tables, tested on a real tenant (October 2026):
+1. INFO.VIEW.COLUMNS() — cheap, works through Execute Queries (the older
+   INFO.* functions and DMVs are refused).
+2. COLUMNSTATISTICS() — works too, but computes statistics for every column
+   and can exceed the per-query memory limit on large models.
+3. Otherwise list the tables in the config (`tables: [Customers, Products]`).
 """
 
 from __future__ import annotations
@@ -90,11 +94,7 @@ class PowerBISource(Source):
                 names = {t: [] for t in self.fixed_tables}
             else:
                 try:
-                    for row in self._query(base, "EVALUATE COLUMNSTATISTICS()"):
-                        r = {k.strip("[]"): v for k, v in row.items()}
-                        t, c = r.get("Table Name"), r.get("Column Name")
-                        if t and c and not str(c).startswith("RowNumber-"):
-                            names.setdefault(t, []).append(c)
+                    names = self._list_columns(base)
                 except SourceError as exc:
                     self.skipped.append(f"{prefix}: could not list tables ({exc}); add `tables:` to the config")
                     continue
@@ -111,6 +111,30 @@ class PowerBISource(Source):
                         self.skipped.append(f"{key}: {exc}")
                         continue
                 yield Table(key, cols)
+
+    _LISTERS = (
+        # cheap model metadata; works through Execute Queries on current Power BI
+        'EVALUATE SELECTCOLUMNS(FILTER(INFO.VIEW.COLUMNS(), [Type] <> "RowNumber"), "t", [Table], "c", [Name])',
+        # older fallback: correct but heavy on big models (per-query memory limit)
+        'EVALUATE SELECTCOLUMNS(COLUMNSTATISTICS(), "t", [Table Name], "c", [Column Name])',
+    )
+
+    def _list_columns(self, base: str) -> dict[str, list[str]]:
+        errors = []
+        for dax in self._LISTERS:
+            try:
+                rows = self._query(base, dax)
+            except SourceError as exc:
+                errors.append(str(exc)[:200])
+                continue
+            names: dict[str, list[str]] = {}
+            for row in rows:
+                r = {k.split("[")[-1].rstrip("]"): v for k, v in row.items()}
+                t, c = r.get("t"), r.get("c")
+                if t and c and not str(c).startswith("RowNumber-"):
+                    names.setdefault(t, []).append(c)
+            return names
+        raise SourceError("; ".join(errors))
 
     def sample(self, table: Table, n: int) -> list[dict]:
         base, t = self._where[table.name]

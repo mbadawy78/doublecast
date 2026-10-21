@@ -61,6 +61,14 @@ class _Index:
         return original, word_endings(key)
 
 
+def _is_vocabulary(folded: str) -> bool:
+    """Doubles that are also ordinary words (from vaults made before such words left the name
+    lists) are restored only when written like a name: "the orchard" stays a fruit garden."""
+    from .data.realnames import WORDLIKE_FOLDED
+
+    return folded in WORDLIKE_FOLDED
+
+
 class Restorer:
     def __init__(
         self,
@@ -96,7 +104,7 @@ class Restorer:
         if not self._indexes:
             return []
         folded, index = fold_with_map(text)
-        candidates: list[tuple[int, int, str]] = []
+        candidates: list[tuple[int, int, str, bool]] = []
         for ix in self._indexes:
             if ix.regex is None:
                 continue
@@ -111,16 +119,18 @@ class Restorer:
                     original = inflect_words(original, endings)
                 s, e = span_to_original(index, m.start(), m.end(), len(text))
                 original = match_case(text[s:e], original)
-                if _WS.sub(" ", m.group(0)) in ix.parts:
-                    word = text[s:e]
-                    if not word[:1].isupper() or (len(word) > 1 and word.isupper()):
-                        continue  # a surname alone is restored only in Title case ("Grant", not "GRANT")
-                candidates.append((s, e, original))
-        # longest match wins where batches overlap
-        candidates.sort(key=lambda r: (r[0], -(r[1] - r[0])))
+                word = text[s:e]
+                if word.islower() and _is_vocabulary(_WS.sub(" ", m.group(0))):
+                    continue  # "the orchard" is a fruit garden, not the double "Orchard"
+                # (a surname alone is restored in any case: doubles never are ordinary words, and a chat
+                # writes "διαμαντης", a heading "ΔΙΑΜΑΝΤΗΣ")
+                exact = _WS.sub(" ", m.group(0)) in ix.exact
+                candidates.append((s, e, original, exact))
+        # longest match wins where batches overlap; an exact match beats an inflected one
+        candidates.sort(key=lambda r: (r[0], -(r[1] - r[0]), not r[3]))
         out: list[Replacement] = []
         last_end = -1
-        for s, e, r in candidates:
+        for s, e, r, _exact in candidates:
             if s >= last_end:
                 out.append((s, e, r))
                 last_end = e

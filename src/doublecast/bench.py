@@ -506,8 +506,9 @@ def run_auto_benchmark(n: int = 100, seed: int = 11) -> str:
         f"too ({', '.join(swapped) or 'none'}). No privacy cost, but the AI reads an invented name where an ordinary phrase was, which can confuse its answer. "
         "Set `auto.capitalized_phrases: false` to trade some recall for cleaner text.",
         "",
-        "A name that appears for the first time at the start of a sentence is caught when its first name",
-        "is a common one; otherwise it is the remaining gap without lists or an AI model.",
-        "`doublecast discover` closes it for every name that exists in your systems.",
+        "A brand-new name at the start of a sentence with an uncommon first name was the main gap; rarity",
+        "of the word in six languages now catches most of it. What is left, discovery or a list closes.",
+        "These emails are written by the benchmark itself; for a test written by someone else, see",
+        "[benchmark-blind.md](benchmark-blind.md).",
     ]
     return "\n".join(lines)

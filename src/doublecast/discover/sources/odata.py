@@ -14,8 +14,8 @@ from ..microsoft import Api
 from .base import Source, SourceError, Table
 
 PRESETS = {
-    # D365 F&O public entity sets. CustomersV3 and ReleasedProductsV2 are documented; the others are
-    # common names that vary by version and are checked at run time.
+    # D365 F&O public entity sets. CustomersV3, ContactPersons and PartyContactsV3 are documented on
+    # Microsoft Learn; the others are common names that vary by version and are skipped if missing.
     "d365fo": [
         "CustomersV3",
         "VendorsV2",

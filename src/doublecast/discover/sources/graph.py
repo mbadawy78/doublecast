@@ -58,7 +58,7 @@ class GraphSource(Source):
     def _contacts(self) -> Iterator[Table]:
         rows = []
         for c in self.api.pages(
-            f"{GRAPH}/me/contacts", {"$select": "displayName,companyName,emailAddresses", "$top": "500"}
+            f"{GRAPH}/me/contacts", {"$select": "displayName,companyName,emailAddresses", "$top": "200"}
         ):
             emails = [e.get("address") for e in c.get("emailAddresses") or [] if e.get("address")]
             rows.append(

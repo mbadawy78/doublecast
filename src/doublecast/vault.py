@@ -31,6 +31,15 @@ class Mapping:
     surrogate: str
 
 
+def _marks(text: str) -> int:
+    """How much spelling information a form carries: accents and capitals."""
+    import unicodedata
+
+    return sum(1 for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) == "Mn") + sum(
+        1 for c in text if c.isupper()
+    )
+
+
 def _load_or_create_key(key_path: Path) -> bytes:
     key_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -79,6 +88,7 @@ class Vault:
         self._cache: list[Mapping] | None = None
         self._keys: set[str] | None = None
         self.version = 0
+        self.rewrites = 0  # originals refined in place: restore indexes must be rebuilt
 
     # ---------------------------------------------------------------- lookups
     def _lookup_key(self, folded_original: str) -> str:
@@ -89,6 +99,26 @@ class Vault:
         with self._lock:
             row = self._db.execute("SELECT surrogate FROM mappings WHERE lookup=?", (key,)).fetchone()
         return row[0] if row else None
+
+    def refine_original(self, original: str) -> None:
+        """Keep the most complete spelling of a value as its original: seen first as "παντελης" in a
+        chat and later as "Παντελής", the accented form is what comes back (stripped again where the
+        text has no accents)."""
+        key = self._lookup_key(fold(original))
+        with self._lock:
+            row = self._db.execute("SELECT id, original FROM mappings WHERE lookup=?", (key,)).fetchone()
+            if not row:
+                return
+            current = self._fernet.decrypt(row[1]).decode("utf-8")
+            if current == original or _marks(original) <= _marks(current):
+                return
+            self._db.execute(
+                "UPDATE mappings SET original=? WHERE id=?", (self._fernet.encrypt(original.encode("utf-8")), row[0])
+            )
+            self._db.commit()
+            self._cache = None
+            self.version += 1
+            self.rewrites += 1
 
     def surrogate_taken(self, surrogate: str) -> bool:
         with self._lock:

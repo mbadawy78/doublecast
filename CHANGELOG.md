@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.2 (2026-10-21)
+
+Tested blind, and fixed what the test found.
+
+- **Blind benchmark** (`bench/blind`): 130 documents written by an agent that never saw the code,
+  scored against Microsoft Presidio. Leaks fell from 40% to 16% of sensitive values (amounts and
+  internal codes aside); exact restore from 116/130 to 130/130 documents.
+- Restore fixes: amounts below one ("€0,568"), a lower-case real name equal to an earlier double,
+  surnames in any case, names written with and without accents, an exact match now beats an
+  inflected one, Greek doubles never share a stem with another double.
+- New clues: pasted CSV and Markdown tables (the header names each column), chat speakers
+  ("callum:", "[09:12] Τάκης:"), "P. Kremastioti", "Vyron M.", surname-first lists, one-word
+  company names ("it's with Crestway"), "Crestway Logistics", lower-case names in chats, known
+  first names anywhere, more legal forms (plc, BV, NV, e.K., AB, OÜ...).
+- Structured data: Greek phone numbers in every common grouping, French/Spanish/Italian/UK and
+  any +country numbers, tax numbers after a label whatever their checksum, GB/SE/ES-CIF VAT,
+  IBANs with a wrong check digit, street addresses (Greek and Latin).
+- Doubles that are ordinary words ("Orchard", "Winter", "Farina", "Ψαράς") are gone from the
+  name lists, and such words are never restored in lower case.
+- Power BI: tables are listed with INFO.VIEW.COLUMNS(), checked on a real tenant; COLUMNSTATISTICS()
+  ran out of memory on a large model and is now only the fallback.
+- Microsoft API details checked against Microsoft Learn: Retry-After dates, Business Central
+  `.default` scope, F&O URL case, contacts page size.
+- Windows clipboard keeps Greek (UTF-8 both ways).
+
 ## 0.2.1 (2026-10-21)
 
 Doubles that read like real people and companies.

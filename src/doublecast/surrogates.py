@@ -15,7 +15,7 @@ import unicodedata
 
 from .data import names as N
 from .data import realnames as R
-from .textnorm import fold, greek_stem, is_greek
+from .textnorm import fold, greek_stem, inflect, is_greek
 from .validators import afm_complete, dni_letter, ean13_complete, iban_with_check, luhn_complete, shape_preserving
 
 _GREEK_LATIN_HINT = re.compile(r"(opoulos|opoulou|akis|aki|idis|idou|iadis|ou|as|is|os)$", re.IGNORECASE)
@@ -32,10 +32,26 @@ def _strip_accents(s: str) -> str:
 
 def match_case(template: str, value: str) -> str:
     letters = [c for c in template if c.isalpha()]
+    if letters and is_greek(template) and template == _strip_accents(template) and len(letters) > 3:
+        value = _strip_accents(value)  # chat-style "φυλλοτεχνη", "Παντελης": written without accents
+        if all(c.islower() for c in letters):
+            return value.lower()
     if letters and all(c.isupper() for c in letters) and len(letters) > 1:
         return value.upper() if not is_greek(value) else _strip_accents(value).upper()
     if letters and all(c.islower() for c in letters):
         return value.lower()
+    t_words, v_words = template.split(), value.split()
+    if len(t_words) == len(v_words):
+        # "la Forneria Castelli", "Nefeli" for a name first seen as "nefeli": each word keeps the
+        # case of its first letter, so the text comes back exactly as it was written
+        out = []
+        for t, v in zip(t_words, v_words, strict=True):
+            if t[:1].isupper() and v[:1].islower():
+                v = v[:1].upper() + v[1:]
+            elif t[:1].islower() and v[:1].isupper():
+                v = v[:1].lower() + v[1:]
+            out.append(v)
+        return " ".join(out)
     return value
 
 
@@ -166,11 +182,20 @@ def _same_class(pool: list[str], like: str, rng: random.Random) -> str:
     want = _ending(like)
     own = fold(like)
     pool = [n for n in pool if fold(n) != own] or pool  # never the original name itself
+    if want == "ου":
+        # "Βαρθολομαίου" may be the genitive of a -ος name: a declinable -ος double, put in the same
+        # case (Παπαδόπουλου), follows it into every case; an invariant one (Γεωργίου) cannot
+        declinable = [n for n in pool if _ending(n) == "οσ"]
+        if declinable:
+            return inflect(rng.choice(declinable), "ου")
     same = [n for n in pool if _ending(n) == want]
-    if not same and want in ("η", "ου", "ο", "α", "ι"):
-        # inflected forms: map back to the nominative classes that produce them
-        nominative = {"η": ("ησ",), "ου": ("οσ",), "ο": ("οσ",), "α": ("ασ", "α"), "ι": ("ησ",)}[want]
-        same = [n for n in pool if _ending(n) in nominative]
+    if not same and want in ("η", "ο", "α", "ι"):
+        # inflected forms: take a name of the nominative class that produces them, in the same case,
+        # so the double and the original always share a grammatical form
+        nominative = {"η": ("ησ",), "ο": ("οσ",), "α": ("ασ",), "ι": ("ησ",)}[want]
+        same = [inflect(n, want) for n in pool if _ending(n) in nominative]
+        if want == "α":
+            same += [n for n in pool if _ending(n) == "α"]
     return rng.choice(same or pool)
 
 
@@ -186,6 +211,10 @@ class SurrogateFactory:
         self._attempt = attempt
         maker = getattr(self, f"_make_{category.lower()}", None)
         value = maker(original, rng) if maker else self._make_custom(original, rng)
+        if category in ("PERSON", "ORG", "SITE", "PRODUCT", "PROJECT", "ADDRESS", "PERSON_PART"):
+            # names are stored in their full spelling; each use takes the case and accents of the
+            # text it goes into (see match_case in Engine.plan)
+            return value
         return match_case(original, value)
 
     # ------------------------------------------------------------ people & organisations

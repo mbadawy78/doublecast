@@ -419,3 +419,68 @@ def test_german_and_italian_names_stay_in_their_language(tmp_path):
     assert reps["Sabine Hoffmann"].split()[0] in R.DE_FEMALE
     assert reps["Giulia Ferrari"].split()[0] in R.IT_FEMALE
     e.vault.close()
+
+
+def test_ordinary_words_in_answers_are_not_restored(tmp_path):
+    e = _engine(tmp_path)
+    e.vault.put("ORG", "Kritikos", "Orchard")
+    out = e.restore("We walked through the orchard. The Orchard team agreed.")
+    assert out == "We walked through the orchard. The Kritikos team agreed."
+    from doublecast.data import realnames as R
+
+    for word in ("Green", "Winter", "Farina", "Ψαράς", "Orchard"):
+        assert word not in R.BRAND_WORDS + R.EN_SURNAMES + R.DE_SURNAMES + R.IT_SURNAMES + R.GREEK_SURNAMES_M
+    e.vault.close()
+
+
+# ---------------------------------------------------------------- blind benchmark findings (0.2.2)
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Τιμή: €0,215/τεμ. και €0,568/kg, σύνολο €1.250,50",
+        "Price €0.568/kg, fixed until 30/6.",
+        "callum: morning\nrosalind: hi, ask grigoris",
+        "[09:12] Τάκης: καλημερα\n[09:14] Νεφέλη Τσαγκαράκη: ναι",
+        "Πελάτης,Υπεύθυνος,Πόλη,ΑΦΜ\nΑγορά Πλήρης ΑΕ,Θοδωρής Βλαχογιάννης,Λάρισα,099873215\n",
+        "| Customer | Contact |\n|---|---|\n| Dairyhill | Jolene Bakshi |",
+        "Κινητό: 6977 412 390. Σταθερό 210 55 92 410.",
+        "IBAN GR7601720120005012098765432 (check digit typo)",
+        "Λ. Κηφισού 112, 12241 Αιγάλεω",
+        "Unit 4 Harrowgate Industrial Estate, Ipswich IP3 9QR",
+    ],
+)
+def test_blind_cases_round_trip(tmp_path, text):
+    e = _engine(tmp_path, capitalized_phrases=True)
+    out = e.scramble(text).text
+    assert e.restore(out) == text
+    e.vault.close()
+
+
+@pytest.mark.parametrize(
+    ("text", "secret"),
+    [
+        ("call Zoi on 6977 412 390.", "412 390"),
+        ("Πελάτης,Υπεύθυνος,ΑΦΜ\nΑγορά Πλήρης ΑΕ,Θοδωρής Βλαχογιάννης,099873215\n", "099873215"),
+        ("Πελάτης,Υπεύθυνος,ΑΦΜ\nΑγορά Πλήρης ΑΕ,Θοδωρής Βλαχογιάννης,099873215\n", "Βλαχογιάννης"),
+        ("callum: morning, all good", "callum"),
+        ("it's with Crestway now", "Crestway"),
+        ("Order for Harrowfield Supermarkets plc", "Harrowfield"),
+        ("Signed: P. Kremastioti", "Kremastioti"),
+        ("IBAN GR7601720120005012098765432", "GR7601720120005012098765432"),
+        ("VAT No: GB 442 9087 12", "442 9087"),
+    ],
+)
+def test_blind_cases_are_caught(tmp_path, text, secret):
+    e = _engine(tmp_path, capitalized_phrases=True)
+    assert secret not in e.scramble(text).text
+    e.vault.close()
+
+
+def test_name_seen_lowercase_then_accented_restores_exactly(tmp_path):
+    e = _engine(tmp_path, capitalized_phrases=True)
+    a = "παντελης: οκ"
+    b = "Ο Παντελής θα στείλει τα στοιχεία."
+    for t in (a, b, a):
+        out = e.scramble(t).text
+        assert e.restore(out) == t
+    e.vault.close()

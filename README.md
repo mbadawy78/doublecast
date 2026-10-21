@@ -66,7 +66,7 @@ That's it: no lists required. Doublecast protects names three ways, from least t
    product, employee and site they contain, refreshed nightly:
    ```bash
    doublecast discover path ~/Documents/masterdata   # a folder of Excel/CSV files, no setup
-   doublecast discover                               # Power BI, Microsoft 365, Dynamics 365, SharePoint, SQL
+   doublecast discover                               # Power BI, Microsoft 365, Dynamics 365, SharePoint, SQL (experimental)
    ```
    It classifies every column by its name and a sample of its values, in six languages, and
    never sends anything anywhere. See [docs/discover.md](docs/discover.md).
@@ -165,36 +165,38 @@ Greek nouns change form with grammatical case, and English-first tools miss it. 
 
 ## Benchmark
 
-`doublecast bench` generates a synthetic multilingual corpus (Greek, English, German, French, Italian, Spanish) and measures leaks and round-trips. Latest run, 1,800 documents ([full report](docs/benchmark.md)):
+**Blind test** ([report](docs/benchmark-blind.md)). 130 realistic business documents in six languages
+(emails, chats, minutes, CSV exports), written by a separate AI agent that never saw this code,
+with 1,542 sensitive values marked. No lists, no AI model:
 
-| Measure | Result |
-|---|---|
-| Listed or pattern-detectable values leaked (companies, people, sites, emails, phones, IBANs, tax and national IDs, invoice numbers, secrets) | **0 of 5,866** |
-| Exact round-trip `restore(scramble(x)) == x` | **100%** |
-| Restore after the model upper-cases, adds possessives, or puts a Greek name in the genitive | **100%** |
-| Ratio drift from money scaling | < 0.001% |
-| Names nobody listed, in that same corpus (a dozen names, each learned from its first greeting or header) | 0 of 543 |
+| | Doublecast | Microsoft Presidio, default setup |
+|---|---:|---:|
+| Emails, IBANs, phone numbers leaked | **0%** | 0% / 50% / 12% |
+| People and companies leaked | **20%** | 31% |
+| All sensitive values leaked (amounts and internal codes aside) | **16%** | 28% |
+| Ordinary phrases changed by mistake | **2.8%** | 45% |
+| Documents restored exactly | **130 / 130** | (one-way) |
+| Names from a master-data export (what `discover` reads), leaked | **0 of 94** | — |
 
-**Auto mode with no lists at all** (`doublecast bench --auto`, 600 synthetic emails, every name new, [report](docs/benchmark-auto.md)):
+So: without lists, about **one name in five gets through** (lone first names, nicknames,
+lower-case names in chats). Discovery or a list closes that for every name it contains.
 
-| Where the name appears | Leaked |
-|---|---|
-| Email headers, greetings, titles, sign-offs, company legal forms | **0%** |
-| Seen once anywhere, mentioned again later with no structure | **0%** |
-| New name mid-sentence | **0%** |
-| New name at a sentence start, common first name | **0%** |
-| New name at a sentence start, **uncommon first name** | **100%**: the gap that discovery or a list closes |
-| Ordinary capitalised phrases swapped by mistake | 1 of 10 ("Purchase Requisition") |
-| Ordinary words learned as names (about 25 regression cases: "Dear Reader", "Mr President", "Dear Subscriber", "Net Weight KG", "Ihr Vertriebsteam"...) | 0 |
+**Generated corpus** (`doublecast bench`, 1,800 documents, [report](docs/benchmark.md)): 0 of
+5,866 listed or pattern-detectable values leaked; 100% exact round-trip, also after the model
+upper-cases names, adds possessives or puts a Greek name in another case. This corpus is written
+by the project itself, so it is a regression gate, not proof.
 
-The vocabulary threshold was tuned while looking at those 10 phrases, so treat that row as indicative. Real-world over-protection reports are welcome.
+**Auto mode on generated emails** (`doublecast bench --auto`, [report](docs/benchmark-auto.md)):
+0% leaks for names in headers, greetings, titles, sign-offs, legal forms and mid-sentence; 2.5%
+for a brand-new uncommon name at the start of a sentence; 1 of 10 held-out ordinary phrases
+swapped; 0 of about 25 ordinary words ("Dear Reader", "Mr President") learned as names.
 
-**Read this honestly.** The corpus is synthetic and written by the same project that it tests, so a 0% here is a regression gate, not a guarantee. Harder, adversarial test cases are the most valuable contribution you can make.
+Harder test cases are the most valuable contribution you can make.
 
 ## What Doublecast does *not* do
 
 - **It is not anonymisation.** Context can still identify a company ("the largest olive-oil exporter on Crete"). A [2026 study](https://www.alphaxiv.org/abs/2605.30848) found web-search agents re-identified roughly half to three-quarters of Presidio-redacted transcripts from context alone. Doublecast reduces exposure; it does not make you anonymous.
-- **Not every unknown name is caught.** Auto mode needs a clue: structure, a capital letter mid-sentence, or a common first name. A name seen for the first time at the start of a sentence with an uncommon first name, or written in lower case, passes through. Discovery covers every name in your systems; the optional local AI detector (`pip install "doublecast[ner]"`) adds a safety net. `doublecast scan` shows exactly what will change.
+- **Not every unknown name is caught.** On a blind test about one name in five got through with no lists: lone first names at the start of a line, nicknames, lower-case surnames in chats, one-word company names. See [benchmark-blind.md](docs/benchmark-blind.md). Discovery covers every name in your systems; the optional local AI detector (`pip install "doublecast[ner]"`) adds a safety net. `doublecast scan` shows exactly what will change.
 - **Auto mode over-protects a little.** A capitalised phrase that isn't everyday vocabulary may be swapped even when it isn't a name (an internal product line, a team nickname). That costs no privacy, but the AI then reads an invented name where an ordinary phrase was, which can confuse its answer; turn the net off with `auto.capitalized_phrases: false`. Code blocks, inline code and shell lines are left alone (secrets in them are still redacted).
 - **A double can meet a real name.** Doublecast never picks a double that appears anywhere in the text being sent, and a real person who shares a name with an earlier double gets a double of their own. That check needs the name written as the double was (capitalised, same form); a real namesake in another Greek case or in lower case can still be restored as the wrong person. Lists or discovery prevent it.
 - **Doubles can be swapped twice.** If text that already contains doubles is scrambled again (for example a scrambled file read through the proxy), names may be doubled again. Restoring then returns the first double, not the real name. Emails, IBANs and IDs are never doubled twice.
@@ -249,6 +251,26 @@ Full reference: [docs/configuration.md](docs/configuration.md). Industry packs: 
 - Discovery connectors for Salesforce, SAP, Google Workspace and HubSpot
 - Benchmarked local NER for Greek, and more languages (Bulgarian, Romanian, Turkish, Arabic)
 - Shared team vaults, and an audit log of what was protected
+
+## How this was built
+
+Doublecast was written by an operations executive, not a software engineer, working with an AI
+coding assistant (Claude). The design decisions, the requirements from daily work in a Greek
+food manufacturer, and the testing on real business documents are human; most of the code was
+written by the AI and reviewed by independent AI reviewers, two rounds of which are reflected in
+the changelog. Every claim in this README is backed by a test you can run (`pytest`,
+`doublecast bench`). If you find something that does not hold, please open an issue.
+
+**Status of the parts:**
+
+| Part | Status |
+|---|---|
+| Engine, files, clipboard, proxy, MCP | Covered by the test suite and the blind benchmark below; the author's field trial on real work is under way |
+| Folder and SQL discovery | Tested locally |
+| Power BI discovery | Queries run against a real tenant (table listing on a 1,137-column model, sampling, Greek table names) |
+| Dynamics 365 F&O | Entity names confirmed on a real tenant; reading data needs read rights on those entities |
+| Microsoft 365 (Outlook, SharePoint), Dataverse, Business Central | **Experimental**: checked against Microsoft's documentation and simulated answers only |
+| Windows clipboard | Written for PowerShell with UTF-8; not yet tested on Windows |
 
 ## Contributing
 

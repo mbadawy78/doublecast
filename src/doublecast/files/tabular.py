@@ -103,7 +103,9 @@ def scramble_cell(engine: Engine, header: object, value: str, table: str = "") -
         from ..discover.profiler import PLACEHOLDERS
 
         if fold(stripped) not in PLACEHOLDERS and len(stripped) >= 2:
-            double = engine.stand_in(category, stripped)
+            from ..surrogates import match_case
+
+            double = match_case(stripped, engine.stand_in(category, stripped))
             engine.learn_value(category, stripped)
             lead = value[: len(value) - len(value.lstrip())]
             trail = value[len(value.rstrip()) :]

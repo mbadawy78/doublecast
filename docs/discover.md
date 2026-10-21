@@ -45,11 +45,11 @@ The broad net leaves ordinary vocabulary alone ("Annual Leave Policy", "Πρόγ
 Εκπαίδευσης") using offline word-frequency lists for all six languages. Turn the net off with
 `auto.capitalized_phrases: false` if you prefer fewer swaps over wider coverage.
 
-**Measured** (`doublecast bench --auto`, 600 synthetic emails, never-repeated names, six
-languages): 0% leaks in every structured situation and for new names mid-sentence or with a
-common first name; 100% leaks for a brand-new name with an uncommon first name at the start
-of a sentence. That last case is what discovery is for. 1 of 10 ordinary capitalised phrases
-was swapped by mistake. Full report: [benchmark-auto.md](benchmark-auto.md).
+**Measured.** On 130 realistic documents written blind by someone else
+([benchmark-blind.md](benchmark-blind.md)), auto mode alone lets about one name in five
+through: lone first names, nicknames, lower-case names in chats. With the names from a
+master-data export added (what discovery does), none of those names leaked. On the project's
+own generated emails ([benchmark-auto.md](benchmark-auto.md)) structured situations leak 0%.
 
 ## Discovery
 

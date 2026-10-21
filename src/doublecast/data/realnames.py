@@ -296,3 +296,48 @@ LANG_NAMES = {
     lang: _fold_set(FIRST[lang]["m"] + FIRST[lang]["f"] + LAST[lang]["m"])
     for lang in ("de", "fr", "it", "es", "en", "el_latin")
 }
+
+
+# Surnames and brand words that are also everyday words ("Green", "Winter", "Farina", "Ψαράς")
+# are left out of the pools: a double must not look like ordinary language in an answer.
+_WORDLIKE = set(
+    """
+Green White Long Price Young Hill Bell Wood Cook Hunt Mason Wells Brooks Gray Mills Ward Reed Webb Knight
+Shaw Baker Turner Parker Carter Cooper Fisher Palmer Marshall Long Hayes Rogers Morgan Lloyd Cox Spencer
+Wolf Klein Braun Lange Jung Lang Vogel Winter Stein Otto Sommer Groß Koch Bauer Fuchs Kaiser Frank Simon
+Graf Haas Schwarz König Walter Berger Roth Beck Kraus Krämer Vogt Jäger Martin Werner Hahn Weiß Peters
+Petit Blanc Brun Roux Noël Marie Robin Clément Masson Marchand Meunier Joly Gaillard Barbier Denis
+Bianco Bruno Conte Costa Testa Villa Serra Gatti Grasso Monti Leone Longo Sala Galli Fontana Carbone Farina
+Russo Greco Ferri Marino Gallo Mazza Parisi Ricci Rossi Bianchi Martini Gentile Amato Santoro
+Blanco Gil Cruz Vega Campos Flores Fuentes León Santos Prieto Calvo Castro Peña Herrera Molina Moreno
+Rubio Delgado Garrido Cano Lozano Reyes Caballero Aguilar Pascual Nieto Diez Vidal Gallego Medina Ramos
+Παππάς Ψαράς Κουτσός Μακρής Ορφανός Γαλανός Κοντός Ξηρός Ρήγας Δούκας Κατσαρός Φουρνάρης Ραπτής Κεφαλάς
+Quarry Orchard Thistle Primrose Meridian Crescent Highland Upland Verity Juniper Sterling Summit Driftwood
+Granville Holloway Langley Drayton Belmont Ironbridge Coldstream
+""".split()
+)
+
+
+WORDLIKE_FOLDED = {strip_accents(w).lower() for w in _WORDLIKE}
+
+
+def _prune(names):
+    return [n for n in names if n not in _WORDLIKE]
+
+
+BRAND_WORDS[:] = _prune(BRAND_WORDS)
+for _pool in (EN_SURNAMES, DE_SURNAMES, FR_SURNAMES, IT_SURNAMES, ES_SURNAMES):
+    _pool[:] = _prune(_pool)
+GREEK_SURNAMES_M[:] = _prune(GREEK_SURNAMES_M)
+GREEK_SURNAMES_F[:] = [greek_feminine(s) for s in GREEK_SURNAMES_M]
+for _lang in LAST:
+    for _g in ("m", "f"):
+        LAST[_lang][_g] = _prune(LAST[_lang][_g])
+for _lang in FIRST:
+    for _g in ("m", "f"):
+        FIRST[_lang][_g] = _prune(FIRST[_lang][_g])
+LAST["el"] = {"m": GREEK_SURNAMES_M, "f": GREEK_SURNAMES_F}
+LAST["el_latin"] = {
+    "m": [translit_name(n) for n in GREEK_SURNAMES_M],
+    "f": [translit_name(n) for n in GREEK_SURNAMES_F],
+}

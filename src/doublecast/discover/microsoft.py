@@ -90,6 +90,23 @@ class MicrosoftAuth:
         return result["access_token"]
 
 
+def _retry_after(value: str | None, attempt: int) -> float:
+    """Retry-After is seconds or an HTTP date; without it, back off exponentially."""
+    if value:
+        try:
+            return float(value)
+        except ValueError:
+            import email.utils
+            from datetime import datetime, timezone
+
+            try:
+                when = email.utils.parsedate_to_datetime(value)
+                return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+            except (TypeError, ValueError):
+                pass
+    return float(min(2**attempt, 30))
+
+
 class Api:
     """Small JSON client with bearer tokens, OData paging, and polite retries.
 
@@ -135,10 +152,7 @@ class Api:
                 fresh = True  # token expired during a long scan: get a new one and retry once
                 continue
             if (r.status_code == 429 or r.status_code >= 500) and attempt < self.RETRIES:
-                try:
-                    wait = float(r.headers.get("Retry-After", ""))
-                except ValueError:
-                    wait = float(min(2**attempt, 30))
+                wait = _retry_after(r.headers.get("Retry-After"), attempt)
                 self._sleep(min(max(wait, 0.5), 60))
                 continue
             return r

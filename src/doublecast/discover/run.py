@@ -100,7 +100,7 @@ def build_sources(cfg: Config, vault, prompt: Callable[[str], None] | None = Non
         elif kind in ("d365fo", "dataverse", "businesscentral"):
             from .sources.odata import ODataSource
 
-            url = str(spec.get("url", "")).rstrip("/")
+            url = str(spec.get("url", "")).strip().rstrip("/").lower()  # token audience must match exactly
             if kind in ("d365fo", "dataverse") and not url:
                 raise ValueError(f"Source '{name}' ({kind}) needs a url")
             if kind == "d365fo":
@@ -112,7 +112,7 @@ def build_sources(cfg: Config, vault, prompt: Callable[[str], None] | None = Non
                 env = spec.get("environment", "production")
                 tenant = spec.get("tenant_id", cfg.microsoft_tenant)
                 base = f"https://api.businesscentral.dynamics.com/v2.0/{tenant}/{env}/api/v2.0"
-                scopes, headers = ["https://api.businesscentral.dynamics.com/user_impersonation"], None
+                scopes, headers = ["https://api.businesscentral.dynamics.com/.default"], None
             sources.append(ODataSource(name, api(scopes, headers), base, kind, spec.get("entities")))
         else:
             raise ValueError(

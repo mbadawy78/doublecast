@@ -5,6 +5,7 @@ import sqlite3
 from urllib.parse import urlparse
 
 import httpx
+import pytest
 from openpyxl import Workbook
 
 from doublecast.config import Config
@@ -185,7 +186,8 @@ def test_graph_discovery_reads_only_metadata():
 
 
 # ---------------------------------------------------------------- Power BI
-def test_powerbi_discovery_with_dax():
+@pytest.mark.parametrize("refuse_info", [False, True])
+def test_powerbi_discovery_with_dax(refuse_info):
     queries = []
     data = {
         "Customer": {
@@ -206,10 +208,11 @@ def test_powerbi_discovery_with_dax():
         if path.endswith("/executeQueries"):
             q = json.loads(request.content)["queries"][0]["query"]
             queries.append(q)
-            if q == "EVALUATE COLUMNSTATISTICS()":
-                rows = [
-                    {"[Table Name]": t, "[Column Name]": c.split("[")[1][:-1]} for t, cols in data.items() for c in cols
-                ]
+            if "INFO.VIEW.COLUMNS" in q or "COLUMNSTATISTICS" in q:
+                if "INFO.VIEW" in q and refuse_info:
+                    return httpx.Response(400, json={"error": {"code": "DatasetExecuteQueriesError"}})
+                rows = [{"[t]": t, "[c]": c.split("[")[1][:-1]} for t, cols in data.items() for c in cols]
+                rows.append({"[t]": "Customer", "[c]": "RowNumber-2662979B"})
             elif q.startswith("EVALUATE TOPN(") and "DISTINCT" not in q:
                 t = q.split("'")[1]
                 cols = data[t]
@@ -224,6 +227,9 @@ def test_powerbi_discovery_with_dax():
     assert {"Nordia Hellas S.A.", "Kallergis Markets"} <= _terms(r, "ORG")
     assert "North" not in {v for vs in r.terms.values() for v in vs}
     assert any("DISTINCT(SELECTCOLUMNS('Customer'" in q for q in queries)
+    # cheap INFO.VIEW listing first; COLUMNSTATISTICS only when that is refused
+    assert "INFO.VIEW.COLUMNS" in queries[0]
+    assert any("COLUMNSTATISTICS" in q for q in queries) == refuse_info
 
 
 def test_powerbi_falls_back_when_table_listing_is_refused():

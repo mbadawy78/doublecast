@@ -21,11 +21,12 @@ from .detectors.heuristics import detect_structure, is_common_word, learnable
 from .detectors.ner import NerDetector
 from .detectors.patterns import CORE_PATTERNS, detect_ibans, detect_patterns, load_pack, load_pack_meta
 from .detectors.secrets import detect_secrets
+from .detectors.tables import detect_tables
 from .discover.rules import RulesStore
 from .numbers import NumberTransformer, guess_decimal_char
 from .restore import Restorer, StreamRestorer, apply
 from .surrogates import SurrogateFactory, match_case, split_legal_form
-from .textnorm import fold, greek_stem, inflect_words, is_greek, word_endings
+from .textnorm import fold, greek_stem, inflect_words, is_greek, stem_key, word_endings
 from .vault import Vault
 
 log = logging.getLogger("doublecast")
@@ -128,6 +129,18 @@ _FIRST_NAME_KEYS = {fold(n) for n in RECOGNISED_FIRST_NAMES}
 _CAP_RUN = re.compile(r"(?<![\w'’\-])[^\W\d_][\w'’\-]*(?:[ \t]+[^\W\d_][\w'’\-]*){0,3}")
 
 
+def _decimal_only(token: str) -> bool:
+    """ "0,568" (a decimal, no thousands separator), as opposed to "49.500" (a thousands group)."""
+    from .numbers import parse_number
+
+    m = re.search(r"\d[\d.,  ]*", token)
+    parsed = parse_number(m.group(0).strip()) if m else None
+    return bool(parsed) and parsed[1].decimal is not None and parsed[1].thousands is None
+
+
+from .data.realnames import WORDLIKE_FOLDED  # noqa: E402
+
+
 def _latin_key(word: str) -> str:
     """How a name is spelled in an email address: Παπαδοπούλου -> papadopoulou, Müller -> muller."""
     from .data.realnames import strip_accents, translit
@@ -193,6 +206,8 @@ class Engine:
         self._email_index_count = 0
         self._script_twins: dict[str, tuple[str, bool]] = {}
         self._used_twin = False
+        self._surrogate_stems: dict[str, str] = {}
+        self._stem_count = 0
         self._homonym_count = 0
         self.recent_dictionary: DictionaryDetector | None = None
         self.terms = self._all_terms()
@@ -230,6 +245,7 @@ class Engine:
         self._known_words_count = 0
         self._restorer: Restorer | None = None
         self._restorer_version = -1
+        self._restorer_rewrites = 0
         self._default_decimal = "."
 
     # ------------------------------------------------------------ terms: config + discovered + learned
@@ -327,10 +343,15 @@ class Engine:
     def restorer(self) -> Restorer:
         if self._restorer is None or self._restorer_version != self.vault.version:
             mappings = self.vault.mappings()
-            if self._restorer is not None and self._restorer.can_extend(len(mappings)):
+            if (
+                self._restorer is not None
+                and self._restorer.can_extend(len(mappings))
+                and self._restorer_rewrites == self.vault.rewrites
+            ):
                 self._restorer.extend(mappings[self._restorer.size :])
             else:
                 self._restorer = Restorer(mappings, self._number_matches)
+                self._restorer_rewrites = self.vault.rewrites
             self._restorer_version = self.vault.version
         return self._restorer
 
@@ -357,6 +378,7 @@ class Engine:
             spans += self.recent_dictionary.detect(text)
         if self.config.structure_detection:
             spans += detect_structure(text, self.config.capitalized_phrases)
+            spans += detect_tables(text)  # pasted CSV and Markdown tables: the header names each column
         if self.ner:
             spans += self.ner.detect(text)
         spans += self.numbers.detect(text)
@@ -373,12 +395,27 @@ class Engine:
             if s.action == "replace" and s.detector in ("pattern", "pack", "secret") and fold(s.text).strip() in keys
         ]
         protected += [m.span() for m in REDACTED_RE.finditer(text)]
+        # a table cell named by its column ("Παντελής Λυκουρέσης" under "Υπάλληλος") is swapped whole,
+        # even where a list already knows part of it
+        cells = [(s.start, s.end) for s in spans if s.kind == "table_cell" and s.category in ("PERSON", "ORG")]
+        if cells:
+            spans = [
+                s
+                for s in spans
+                if s.kind == "table_cell"
+                or s.detector in ("pattern", "secret", "money", "quantity", "date")
+                or not any(a <= s.start and s.end <= b for a, b in cells)
+            ]
         spans += self._same_text_mentions(text, spans)
-        spans += self._homonyms(text, spans)
         if protected:
             guard = _Guard(protected)
             spans = [s for s in spans if not guard.hits(s.start, s.end)]
-        return resolve_overlaps(spans)
+        spans = resolve_overlaps(spans)
+        # only now, with the final spans known: real names that look like an earlier double
+        homonyms = self._homonyms(text, spans)
+        if protected:
+            homonyms = [s for s in homonyms if not guard.hits(s.start, s.end)]
+        return resolve_overlaps(spans + homonyms)
 
     def _same_text_mentions(self, text: str, spans: list[Span]) -> list[Span]:
         """ "Dear Mr Spyros Pappas, ... please call Pappas": once a strong clue names someone, every
@@ -425,7 +462,18 @@ class Engine:
             for m in self.vault.mappings()[self._homonym_count :]:
                 if m.category in ("PERSON", "PERSON_PART", "ORG"):
                     key = fold(m.surrogate)
-                    self._homonym_keys[key] = "ORG" if m.category == "ORG" else "PERSON"
+                    cat = "ORG" if m.category == "ORG" else "PERSON"
+                    self._homonym_keys[key] = cat
+                    if is_greek(key):  # restore also matches other Greek cases: Σαρρής / Σαρρή
+                        self._homonym_keys.setdefault(stem_key(key), cat)
+                    if m.category == "PERSON" and len(key.split()) > 1:
+                        # each word too: a real "Σπύρος" next to the double "Αλεξόπουλος" would read back
+                        # as the double "Σπύρου Αλεξόπουλου" of someone else
+                        for w in key.split():
+                            if len(w) >= 3:
+                                self._homonym_keys.setdefault(w, "PERSON")
+                                if is_greek(w):
+                                    self._homonym_keys.setdefault(stem_key(w), "PERSON")
             self._homonym_count = len(self.vault.mappings())
         if not self._homonym_keys:
             return []
@@ -433,12 +481,16 @@ class Engine:
         out: list[Span] = []
         for m in _CAP_RUN.finditer(text):
             words = list(re.finditer(r"\S+", m.group(0)))
-            # longest run of words first: "Daniel Kelgate" before "Kelgate"
-            found = False
-            for i in range(len(words)):
+            i = 0
+            while i < len(words):
+                # longest run of words first ("Daniel Kelgate" before "Kelgate"), then keep scanning
                 for j in range(len(words), i, -1):
                     a, b = m.start() + words[i].start(), m.start() + words[j - 1].end()
-                    cat = self._homonym_keys.get(fold(text[a:b])) if text[a].isupper() else None
+                    f = fold(text[a:b])
+                    # restore is case-blind, so a real "grigoris" in a chat needs its own double too
+                    cat = self._homonym_keys.get(f) or self._homonym_keys.get(stem_key(f))
+                    if cat and text[a].islower() and f in WORDLIKE_FOLDED:
+                        cat = None  # "orchard" in lower case is never restored, so never a clash
                     if cat and not any(x < b and a < y for x, y in taken):
                         out.append(
                             Span(
@@ -453,16 +505,16 @@ class Engine:
                             )
                         )
                         taken.append((a, b))
-                        found = True
+                        i = j - 1
                         break
-                if found:
-                    break
+                i += 1
         return out
 
     # ------------------------------------------------------------ stand-ins
     def stand_in(self, category: str, original: str) -> str:
         existing = self.vault.get(original)
         if existing:
+            self.vault.refine_original(original)
             return existing
         twin = self._other_script_twin(category, original)
         for attempt in range(40):
@@ -490,6 +542,8 @@ class Engine:
                 if len(w) >= 4
             ):
                 continue  # a double must never look like (an inflection of) another real listed name
+            if self._stem_clash(candidate, original):
+                continue  # "Δημάκη" for one person and "Δημάκης" for another would restore wrongly
             stored = self.vault.put(category, original, candidate)
             if stored != candidate:
                 self._used_twin = False
@@ -590,10 +644,25 @@ class Engine:
         words = [GREEK_FROM_LATIN.get(w) for w in double.split()]
         return " ".join(words) if all(words) else None
 
+    def _stem_clash(self, candidate: str, original: str) -> bool:
+        if not is_greek(candidate):
+            return False
+        maps = self.vault.mappings()
+        for m in maps[self._stem_count :]:
+            if is_greek(m.surrogate):
+                self._surrogate_stems.setdefault(stem_key(fold(m.surrogate)), fold(m.original))
+        self._stem_count = len(maps)
+        owner = self._surrogate_stems.get(stem_key(fold(candidate)))
+        return owner is not None and owner != fold(original) and stem_key(owner) != stem_key(fold(original))
+
     def _register_surname(self, original: str, surrogate: str) -> None:
         o_words, s_words = original.split(), surrogate.split()
         if len(o_words) >= 2 and len(s_words) >= 2 and len(o_words[-1]) >= 4:
-            if self.vault.get(o_words[-1]) is None and not self.vault.surrogate_taken(s_words[-1]):
+            if (
+                self.vault.get(o_words[-1]) is None
+                and not self.vault.surrogate_taken(s_words[-1])
+                and not self._stem_clash(s_words[-1], o_words[-1])
+            ):
                 self.vault.put("PERSON_PART", o_words[-1], s_words[-1])
 
     # ------------------------------------------------------------ public API
@@ -622,6 +691,9 @@ class Engine:
                 if span.action == "date":
                     # remember the exact written form, so "05/11/24" comes back padded
                     self.vault.try_put("DATE", span.text, new)
+                elif re.search(r"(?<![\d.,])\d{1,3}[.,]\d{3}(?![\d.,])", new) and _decimal_only(span.text):
+                    # "0,568" scaled to "1,136" reads back as one thousand: remember the exact pair
+                    self.vault.try_put("MONEY" if span.action == "money" else "QUANTITY", span.text, new)
             else:
                 canonical = span.meta.get("canonical", span.text)
                 self._used_twin = False
