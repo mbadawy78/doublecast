@@ -48,7 +48,20 @@ class Model:
         self._engine = None
         self._proxy: subprocess.Popen | None = None
         self.data: dict = {}
+        self.mirrors: list = []
         self.refresh()
+
+    def start_mirrors(self) -> None:
+        """Keep every folder added with `doublecast mirror` in sync while the icon runs."""
+        import dataclasses
+
+        from . import mirror
+        from .engine import Engine
+
+        for ws in sorted({m.get("workspace", "default") for m in mirror.registered(self.cfg.home)}):
+            engine = Engine(dataclasses.replace(self.cfg, workspace=ws))
+            engine.activity.source = "mirror"
+            self.mirrors += mirror.run_all(engine)
 
     # ------------------------------------------------------------ state
     def refresh(self) -> dict:
@@ -83,6 +96,16 @@ class Model:
         if not rows:
             return ["Nothing swapped yet"]
         return [f"{r['time']}  {r['category'].lower()}  {r['from']} → {r['to']}  ({r['via']})" for r in rows]
+
+    @property
+    def mirror_lines(self) -> list[str]:
+        if not self.mirrors:
+            return ["No mirrored folders (doublecast mirror <folder>)"]
+        out = []
+        for m in self.mirrors:
+            when = f"synced {m.last_sync}" if m.last_sync else "first sync running…"
+            out.append(f"{m.src.name} → {m.twin.name}  ·  {when}")
+        return out
 
     # ------------------------------------------------------------ actions
     def engine(self):
@@ -192,6 +215,7 @@ def autostart(enable: bool = True) -> str:
 # ---------------------------------------------------------------- toolkits
 def run_tray(workspace: str | None = None) -> int:
     model = Model(workspace)
+    model.start_mirrors()
     if platform.system() == "Darwin":
         return _run_macos(model)
     return _run_pystray(model)
@@ -211,6 +235,7 @@ def _run_macos(model: Model) -> int:
             self.today_item = rumps.MenuItem(model.today_line)
             self.total_item = rumps.MenuItem(model.total_line)
             self.last_item = rumps.MenuItem("Last swaps")
+            self.mirror_item = rumps.MenuItem("Mirrored folders")
             self.login_item = rumps.MenuItem("Start at login", callback=self.on_login)
             self.login_item.state = autostart_enabled()
             self.menu = [
@@ -219,6 +244,7 @@ def _run_macos(model: Model) -> int:
                 self.today_item,
                 self.total_item,
                 self.last_item,
+                self.mirror_item,
                 None,
                 rumps.MenuItem("Scramble clipboard", callback=self.on_scramble, key="s"),
                 rumps.MenuItem("Restore clipboard", callback=self.on_restore, key="r"),
@@ -241,6 +267,12 @@ def _run_macos(model: Model) -> int:
                 pass
             for line in model.last_lines:
                 self.last_item.add(rumps.MenuItem(line))
+            try:
+                self.mirror_item.clear()
+            except Exception:
+                pass
+            for line in model.mirror_lines:
+                self.mirror_item.add(rumps.MenuItem(line))
 
         def _say(self, message: str):
             rumps.notification("Doublecast", "", message)
@@ -302,6 +334,10 @@ def _run_pystray(model: Model) -> int:
         pystray.MenuItem(lambda _: model.today_line, None, enabled=False),
         pystray.MenuItem(lambda _: model.total_line, None, enabled=False),
         pystray.MenuItem("Last swaps", pystray.Menu(last_items)),
+        pystray.MenuItem(
+            "Mirrored folders",
+            pystray.Menu(lambda: [pystray.MenuItem(x, None, enabled=False) for x in model.mirror_lines]),
+        ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Scramble clipboard", lambda icon, _: notify(icon, model.scramble_clipboard())),
         pystray.MenuItem("Restore clipboard", lambda icon, _: notify(icon, model.restore_clipboard())),

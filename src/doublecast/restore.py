@@ -47,7 +47,7 @@ class _Index:
         for key in ambiguous:
             self.exact.pop(key, None)
         keys = sorted(set(self.exact) | set(self.stems))
-        self.regex = re.compile(r"(?<!\w)(?:" + trie_regex(keys) + r")(?!\w)") if keys else None
+        self.regex = re.compile(r"(?<![^\W_])(?:" + trie_regex(keys) + r")(?![^\W_])") if keys else None
         self.max_len = max((len(k) for k in self.exact), default=0)
 
     def lookup(self, matched: str) -> tuple[str, str] | None:
@@ -104,6 +104,7 @@ class Restorer:
         if not self._indexes:
             return []
         folded, index = fold_with_map(text)
+        folded = folded.replace("_", " ")
         candidates: list[tuple[int, int, str, bool]] = []
         for ix in self._indexes:
             if ix.regex is None:
@@ -120,6 +121,8 @@ class Restorer:
                 s, e = span_to_original(index, m.start(), m.end(), len(text))
                 original = match_case(text[s:e], original)
                 word = text[s:e]
+                if "_" in word and not any(c.isspace() for c in word):
+                    original = re.sub(r"\s+", "_", original)
                 if word.islower() and _is_vocabulary(_WS.sub(" ", m.group(0))):
                     continue  # "the orchard" is a fruit garden, not the double "Orchard"
                 # (a surname alone is restored in any case: doubles never are ordinary words, and a chat

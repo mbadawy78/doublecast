@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.4 (2026-10-21)
+
+- `doublecast mirror FOLDER`: a scrambled twin of a folder (`FOLDER-AI`) for AI tools with folder
+  access, kept in sync both ways. File and folder names are scrambled; unreadable formats are not
+  copied; the AI's edits and new files come back restored; nothing real is ever deleted; clashes
+  keep both versions. The tray runs every mirrored folder in the background.
+- Listed names are now found inside file names and identifiers (`Nordia_Hellas_D365_Items.xlsx`),
+  and restored with the underscores in place.
+- README: attaching files and cloud connectors bypass Doublecast, said plainly.
+
 ## 0.2.3 (2026-10-21)
 
 - `doublecast status [--json]`: proxy state, today's swaps by kind, the last five (masked).

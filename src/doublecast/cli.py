@@ -568,6 +568,51 @@ def cmd_tray(args) -> int:
     return run_tray(args.workspace)
 
 
+def cmd_mirror(args) -> int:
+    from . import mirror as mm
+
+    cfg = load_config(getattr(args, "config", None), **({"workspace": args.workspace} if args.workspace else {}))
+    if args.list or not args.folder:
+        items = mm.registered(cfg.home)
+        if not items:
+            print("No mirrored folders. Add one: doublecast mirror ~/path/to/folder")
+        for m in items:
+            print(f"{m['src']}  ->  {m['twin']}  (workspace {m.get('workspace', 'default')})")
+        return 0
+    if args.remove:
+        ok = mm.unregister(cfg.home, Path(args.folder))
+        print("Stopped mirroring (both folders are left as they are)." if ok else "That folder was not mirrored.")
+        return 0
+    engine = _engine(args)
+    engine.activity.source = "mirror"
+    m = mm.Mirror(engine, Path(args.folder), Path(args.to) if args.to else None)
+    mm.register(cfg.home, m.src, m.twin, cfg.workspace)
+    print(f"{BOLD}{m.src}{RESET}\n  -> {BOLD}{m.twin}{RESET}  (give the AI this one)")
+    started = time.monotonic()
+    report = m.sync()
+    print(
+        f"{GREEN}First sync in {time.monotonic() - started:.0f}s{RESET}: {report.line()}; {report.values} value(s) swapped"
+    )
+    if report.skipped:
+        kinds = ", ".join(f"{k} {v}" for k, v in sorted(report.skipped.items(), key=lambda kv: -kv[1]))
+        print(f"{DIM}Not copied (cannot be scrambled): {kinds}{RESET}")
+    if args.once:
+        return 0
+    print(
+        f"{DIM}Watching for changes every {args.interval:g}s. Ctrl+C to stop; the menu-bar icon runs it for you.{RESET}"
+    )
+
+    def show(_m, r):
+        if r.scrambled or r.restored or r.conflicts:
+            print(f"{time.strftime('%H:%M:%S')}  {r.line()}")
+
+    try:
+        m.watch(interval=args.interval, on_sync=show)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def cmd_doctor(args) -> int:
     ok = True
     cfg = load_config(args.config)
@@ -695,6 +740,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--autostart", action="store_true", help="start the icon when you log in")
     s.add_argument("--no-autostart", action="store_true", help="stop starting it at login")
     s.set_defaults(func=cmd_tray)
+    s = sub.add_parser("mirror", help="keep a scrambled twin of a folder for the AI, in sync both ways")
+    s.add_argument("folder", nargs="?", help="the real folder")
+    s.add_argument("--to", help="where the twin goes (default: next to it, named <folder>-AI)")
+    s.add_argument("--once", action="store_true", help="sync once and exit")
+    s.add_argument("--interval", type=float, default=3.0, help="seconds between checks (default 3)")
+    s.add_argument("--list", action="store_true", help="show mirrored folders")
+    s.add_argument("--remove", action="store_true", help="stop mirroring this folder")
+    s.set_defaults(func=cmd_mirror)
     s = sub.add_parser("doctor", help="check the installation")
     s.set_defaults(func=cmd_doctor)
     return p

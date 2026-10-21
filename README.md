@@ -122,6 +122,27 @@ doublecast restore  answer.docx               # -> answer.restored.docx
 
 Excel keeps formulas and formats (money columns are scaled, percentages untouched); Word keeps run-level formatting, tables, headers and footers; PDFs are extracted to Markdown.
 
+### Folders: a scrambled twin (Claude app, Cowork, any agent with folder access)
+
+When an AI gets access to a folder it can open anything in it, with its own tools. Asking it to
+use Doublecast is not a guarantee. So don't give it the real folder; give it a twin:
+
+```bash
+doublecast mirror ~/Projects/Bakeshack      # creates ~/Projects/Bakeshack-AI and keeps it in sync
+```
+
+- Every Excel, Word, CSV, text and code file is copied into the twin **scrambled**, file and folder
+  names included. PDFs become read-only Markdown.
+- Photos, videos, archives, PowerPoint and other formats Doublecast can't read are **not copied**
+  (copying them as they are would leak). The twin's `_DOUBLECAST.md` says how many were left out.
+- When the AI edits a twin file or creates a new one, it lands in your real folder with the real
+  values back. Nothing in your real folder is ever deleted; if you both changed a file, the AI's
+  version is saved next to yours as `name (AI).ext`.
+- The bookkeeping (which twin file is which real file) stays in `~/.doublecast/mirrors/`, never in
+  the twin.
+- The menu-bar icon keeps every mirrored folder in sync while it runs (`doublecast mirror --list`,
+  `--remove`). `-w NAME` gives a project its own vault.
+
 ### As a Claude skill
 
 Add [`integrations/claude-skill/doublecast`](integrations/claude-skill/doublecast/SKILL.md) to Claude
@@ -224,6 +245,8 @@ Harder test cases are the most valuable contribution you can make.
 - **A double can meet a real name.** Doublecast never picks a double that appears anywhere in the text being sent, and a real person who shares a name with an earlier double gets a double of their own. That check needs the name written as the double was (capitalised, same form); a real namesake in another Greek case or in lower case can still be restored as the wrong person. Lists or discovery prevent it.
 - **Doubles can be swapped twice.** If text that already contains doubles is scrambled again (for example a scrambled file read through the proxy), names may be doubled again. Restoring then returns the first double, not the real name. Emails, IBANs and IDs are never doubled twice.
 - **Only what you listed, in the forms you listed.** `Nordia Hellas` is caught in any case, accent or Greek inflection, but `Nordia-Hellas`, `NordiaHellas`, the bare brand `Nordia`, or `Larissa` on its own (when you listed `Larissa Plant`) are not. Add those as aliases or separate terms.
+- **Attaching a file to a chat bypasses everything.** The app uploads it directly. Attach only scrambled copies, or better, give the AI a mirrored twin folder instead.
+- **Connectors that run in the cloud** (added in claude.ai, such as Microsoft 365 or Dynamics) fetch data on the provider's servers; Doublecast never sees it. Only connectors that run on your own computer can be put behind Doublecast.
 - **Images and binary PDFs inside API requests** can't be rewritten; the proxy logs a warning when they pass through. Scramble files with `doublecast scramble` first.
 - **Amounts the AI invents** from general knowledge ("a typical €100 fee") are divided by the secret factor on the way back too. Amounts the AI computes from your figures restore to within a cent.
 - **Recipes, formulas and other know-how expressed as ratios** stay visible by design: the model needs them to help. Use a local model for those.
@@ -256,6 +279,7 @@ Full reference: [docs/configuration.md](docs/configuration.md). Industry packs: 
 | `doublecast scan FILE` | Show what would be swapped (changes nothing) |
 | `doublecast scramble FILE` / `restore FILE` | Files, or `-` for stdin → stdout |
 | `doublecast clip scramble` / `clip restore` | Clipboard, for web chats |
+| `doublecast mirror FOLDER` | Keep a scrambled twin of a folder for the AI, in sync both ways |
 | `doublecast proxy` | Local proxy for API tools |
 | `doublecast run -- <command>` | Run one command through a temporary proxy |
 | `doublecast env claude\|codex` | Print the settings for a tool |

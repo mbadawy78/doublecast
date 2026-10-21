@@ -106,7 +106,7 @@ class DictionaryDetector:
         if self.stems:
             parts.append(trie_regex(sorted(self.stems)))
         body = "|".join(f"(?:{p})" for p in parts)
-        return re.compile(rf"(?<!\w)(?:{body})(?!\w)")
+        return re.compile(rf"(?<![^\W_])(?:{body})(?![^\W_])")  # "Trio_D365" is two words
 
     @property
     def size(self) -> int:
@@ -122,6 +122,7 @@ class DictionaryDetector:
         if self._regex is None:
             return []
         folded, index = fold_with_map(text)
+        folded = folded.replace("_", " ")  # file names and identifiers: "Nordia_Hellas_D365"
         spans: list[Span] = []
         for m in self._regex.finditer(folded):
             if m.end() == m.start():

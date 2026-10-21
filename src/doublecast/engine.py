@@ -713,6 +713,8 @@ class Engine:
                 if endings:
                     new = inflect_words(new, endings)  # keep Greek grammar: της Καρανίκα -> της Σολίκα
                 new = match_case(span.text, new)  # "ΝΟΡΔΙΑ" in, "ΒΕΡΦΙΛΝΤ" out
+                if "_" in span.text and not any(c.isspace() for c in span.text):
+                    new = re.sub(r"\s+", "_", new)  # Nordia_Hellas -> Wakefield_Foods
             replacements.append((span.start, span.end, new))
             log_rows.append((span.category, span.text, new))
             kept.append(span)
