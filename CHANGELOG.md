@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3 (2026-10-21)
+
+- `doublecast status [--json]`: proxy state, today's swaps by kind, the last five (masked).
+- `doublecast tray`: a menu-bar icon (macOS) or tray icon (Windows, Linux) with that status
+  and one-click clipboard scramble/restore; `--autostart` starts it at login.
+- Claude Code plugin `doublecast-status`: a status-line entry and a `/doublecast` pane.
+- An activity file per workspace holds counts and masked samples only (owner-readable).
+
 ## 0.2.2 (2026-10-21)
 
 Tested blind, and fixed what the test found.

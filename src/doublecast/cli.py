@@ -11,6 +11,8 @@ doublecast env claude|codex      print the settings to use the proxy
 doublecast mcp                   run the MCP server (stdio)
 doublecast vault stats|list|forget|wipe
 doublecast bench                 run the leak benchmark
+doublecast status [--json]       proxy state, today's swaps, the last few (masked)
+doublecast tray [--autostart]    menu-bar / tray icon
 doublecast doctor                check the installation
 """
 
@@ -133,6 +135,7 @@ def _read_input(file: str, engine) -> str:
 
 def cmd_scramble(args) -> int:
     engine = _engine(args)
+    engine.activity.source = "files"
     if args.file == "-":
         result = engine.scramble(sys.stdin.read())
         sys.stdout.write(result.text)
@@ -205,6 +208,7 @@ def _clipboard_set(text: str) -> None:
 
 def cmd_clip(args) -> int:
     engine = _engine(args)
+    engine.activity.source = "clipboard"
     text = _clipboard_get()
     if args.direction == "scramble":
         result = engine.scramble(text)
@@ -291,6 +295,7 @@ def cmd_proxy(args) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     engine = _engine(args)
+    engine.activity.source = "proxy"
     host = args.host or engine.config.proxy_host
     port = args.port or engine.config.proxy_port
     env = _env_lines(host, port)
@@ -311,6 +316,7 @@ def cmd_run(args) -> int:
         return 2
     logging.basicConfig(level=logging.WARNING)
     engine = _engine(args)
+    engine.activity.source = "proxy"
     host = "127.0.0.1"
     port = _free_port(args.port or engine.config.proxy_port)
     server = _serve(engine, host, port, background=True)
@@ -509,6 +515,59 @@ def cmd_bench(args) -> int:
     return 0
 
 
+def _proxy_running(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
+def status_data(cfg) -> dict:
+    from . import activity
+
+    data = activity.summary(cfg.home / f"{cfg.workspace}.activity.json")
+    data["proxy"] = {
+        "running": _proxy_running(cfg.proxy_host, cfg.proxy_port),
+        "address": f"http://{cfg.proxy_host}:{cfg.proxy_port}",
+    }
+    data["workspace"] = cfg.workspace
+    data["version"] = __version__
+    return data
+
+
+def cmd_status(args) -> int:
+    import json
+
+    cfg = load_config(getattr(args, "config", None), **({"workspace": args.workspace} if args.workspace else {}))
+    data = status_data(cfg)
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False))
+        return 0
+    dot = f"{GREEN}●{RESET} proxy running" if data["proxy"]["running"] else f"{DIM}○ proxy off{RESET}"
+    print(f"{BOLD}Doublecast {data['version']}{RESET}  {dot}  workspace {data['workspace']}")
+    today = ", ".join(f"{k.lower()} {v}" for k, v in sorted(data["today"].items(), key=lambda kv: -kv[1]))
+    print(f"today   {data['today_total']} swapped" + (f"  ({today})" if today else ""))
+    print(f"total   {data['total_all']} swapped")
+    for row in data["last"]:
+        print(
+            f"  {DIM}{row['time']}{RESET} {row['category'].lower():8s} {row['from']} -> {row['to']}  {DIM}{row['via']}{RESET}"
+        )
+    return 0
+
+
+def cmd_tray(args) -> int:
+    from .tray import autostart, run_tray
+
+    if args.autostart:
+        print(autostart(enable=True))
+        return 0
+    if args.no_autostart:
+        print(autostart(enable=False))
+        return 0
+    return run_tray(args.workspace)
+
+
 def cmd_doctor(args) -> int:
     ok = True
     cfg = load_config(args.config)
@@ -629,6 +688,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--auto", action="store_true", help="benchmark auto mode: no lists, only structure and learning")
     s.set_defaults(func=cmd_bench)
 
+    s = sub.add_parser("status", help="what Doublecast is doing: proxy, today's swaps, the last few (masked)")
+    s.add_argument("--json", action="store_true", help="machine-readable, for widgets and status lines")
+    s.set_defaults(func=cmd_status)
+    s = sub.add_parser("tray", help="menu-bar / tray icon with status, metrics and clipboard buttons")
+    s.add_argument("--autostart", action="store_true", help="start the icon when you log in")
+    s.add_argument("--no-autostart", action="store_true", help="stop starting it at login")
+    s.set_defaults(func=cmd_tray)
     s = sub.add_parser("doctor", help="check the installation")
     s.set_defaults(func=cmd_doctor)
     return p

@@ -137,6 +137,29 @@ codex  mcp add doublecast -- doublecast mcp
 
 The agent gets `read_scrambled`, `write_restored`, `make_scrambled_copy`, `restore_file_copy` and `vault_stats`. **No tool ever returns a real value to the model**, so there is deliberately no `restore_text`.
 
+## See it working
+
+**Menu bar / system tray.** A shield next to the clock with today's count. Its menu shows
+whether Claude Code and Codex are protected, today's swaps by kind, the last five swaps
+(masked: `El••• → Fa•••`), and one-click **Scramble clipboard** / **Restore clipboard**.
+
+```bash
+pip install "doublecast[tray] @ git+https://github.com/mbadawy78/doublecast"
+doublecast tray --autostart      # start it now and at every login
+```
+
+**Claude Code status line.** `🛡 Doublecast ● 23 today` under the prompt, and `/doublecast`
+opens a pane with the same details and the clipboard buttons. At the prompt of a terminal
+session:
+
+```
+/plugin install doublecast-status --marketplace mbadawy78/doublecast
+```
+
+From a shell: `claude plugin install doublecast-status --marketplace mbadawy78/doublecast`.
+
+Both read `doublecast status --json`: counts and masked samples only, never a real value.
+
 ## How it works
 
 ```mermaid
@@ -271,6 +294,8 @@ the changelog. Every claim in this README is backed by a test you can run (`pyte
 | Dynamics 365 F&O | Entity names confirmed on a real tenant; reading data needs read rights on those entities |
 | Microsoft 365 (Outlook, SharePoint), Dataverse, Business Central | **Experimental**: checked against Microsoft's documentation and simulated answers only |
 | Windows clipboard | Written for PowerShell with UTF-8; not yet tested on Windows |
+| Menu-bar icon (macOS) and tray icon (Windows, Linux) | Menu logic tested; the macOS icon not yet run on a real Mac |
+| Claude Code status line | Validated and type-checked against Claude Code 2.1.306 |
 
 ## Contributing
 

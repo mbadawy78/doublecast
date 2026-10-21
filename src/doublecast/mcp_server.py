@@ -35,7 +35,9 @@ INSTRUCTIONS = (
 
 
 def _engine() -> Engine:
-    return Engine(load_config())
+    engine = Engine(load_config())
+    engine.activity.source = "mcp"
+    return engine
 
 
 def _text_of(path: Path) -> str:

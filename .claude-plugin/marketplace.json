@@ -1,0 +1,13 @@
+{
+  "name": "doublecast",
+  "owner": {
+    "name": "Mimis Badawy"
+  },
+  "plugins": [
+    {
+      "name": "doublecast-status",
+      "source": "./integrations/claude-code/doublecast-status"
+    }
+  ],
+  "description": "Doublecast for Claude Code: see what is protected, from the status line"
+}

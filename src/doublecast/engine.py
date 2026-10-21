@@ -13,6 +13,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
+from .activity import Activity
 from .config import Config, Term, load_config
 from .data.names import RECOGNISED_FIRST_NAMES
 from .detectors.base import Span, resolve_overlaps
@@ -195,6 +196,7 @@ class Engine:
         self.vault = vault or Vault(self.config.vault_path, self.config.key_path)
         self.factory = SurrogateFactory(self.vault.seed(), self.config.default_language, self.config.languages)
         self.rules = RulesStore(self.config.rules_path, self.vault)
+        self.activity = Activity(self.config.home / f"{self.config.workspace}.activity.json")
         self._rules_dirty = False
         self._context: set[str] = set()
         self._recent_terms: list = []
@@ -725,6 +727,7 @@ class Engine:
         out = apply(text, replacements)
         for span in kept:
             self.totals[span.category] = self.totals.get(span.category, 0) + 1
+        self.activity.record(log_rows)
         return ScrambleResult(out, kept, log_rows, self._warnings(out))
 
     def scramble_cached(self, text: str) -> str:

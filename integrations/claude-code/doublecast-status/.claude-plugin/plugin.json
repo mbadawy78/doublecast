@@ -1,0 +1,10 @@
+{
+  "name": "doublecast-status",
+  "version": "0.1.0",
+  "description": "Doublecast in Claude Code: a status-line entry and a pane with today's swaps, the last few (masked) and clipboard buttons",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Mimis Badawy",
+    "url": "https://github.com/mbadawy78"
+  }
+}
