@@ -25,7 +25,7 @@ from .files import TEXT_EXTENSIONS, read_exact, scramble_file
 
 READABLE = {".xlsx", ".xlsm", ".docx", ".csv", ".tsv", ".pdf"} | TEXT_EXTENSIONS
 SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", ".DS_Store", ".Trash"}
-PAGE = 60_000  # characters per read; ask for the next page with offset
+PAGE = 20_000  # characters per read (chat apps cap a tool result); the rest comes with offset
 _BAD = re.compile(r'[\\/:*?"<>|\n\r\t]')
 
 
