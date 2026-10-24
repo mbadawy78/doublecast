@@ -31,6 +31,12 @@ class Mapping:
     surrogate: str
 
 
+def _accents(text: str) -> int:
+    import unicodedata
+
+    return sum(1 for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) == "Mn")
+
+
 def _marks(text: str) -> int:
     """How much spelling information a form carries: accents and capitals."""
     import unicodedata
@@ -110,8 +116,11 @@ class Vault:
             if not row:
                 return
             current = self._fernet.decrypt(row[1]).decode("utf-8")
-            if current == original or _marks(original) <= _marks(current):
-                return
+            if original.isupper() and not current.isupper() and _accents(original) <= _accents(current):
+                return  # capitals carry no spelling news: "Costco" stays, "COSTCO" does not replace it
+            better_case = current.isupper() and not original.isupper() and _accents(original) >= _accents(current)
+            if current == original or (_marks(original) <= _marks(current) and not better_case):
+                return  # "COSTCO" from an alias column gives way to "Costco" when it turns up
             self._db.execute(
                 "UPDATE mappings SET original=? WHERE id=?", (self._fernet.encrypt(original.encode("utf-8")), row[0])
             )

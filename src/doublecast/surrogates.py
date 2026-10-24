@@ -40,6 +40,15 @@ def match_case(template: str, value: str) -> str:
         return value.upper() if not is_greek(value) else _strip_accents(value).upper()
     if letters and all(c.islower() for c in letters):
         return value.lower()
+    v_letters = [c for c in value if c.isalpha()]
+    if (
+        len(v_letters) > 1
+        and all(c.isupper() for c in v_letters)
+        and not is_greek(value)
+        and not any(c.isdigit() for c in value)
+    ):
+        # known only as "COSTCO" but written "Kingsley" here: it was written "Costco"
+        value = " ".join(w[:1] + w[1:].lower() for w in value.split())
     t_words, v_words = template.split(), value.split()
     if len(t_words) == len(v_words):
         # "la Forneria Castelli", "Nefeli" for a name first seen as "nefeli": each word keeps the
@@ -79,6 +88,27 @@ def split_legal_form(value: str) -> tuple[str, str]:
             return stripped[: m.start()], stripped[m.start() :]
     return stripped, ""
 
+
+def org_core(value: str) -> str:
+    """The distinctive part of a company name: "Costco Wholesale Canada Ltd." -> "Costco"."""
+    core, _ = split_legal_form(value)
+    words = core.replace(",", " ").split()
+    keep = []
+    for w in words:
+        f = fold(w.strip(".&()"))
+        if f in R.GENERIC_ORG_WORDS or f in _PLACE_WORDS:
+            break
+        keep.append(w)
+    out = " ".join(keep).strip(" ,.-&")
+    return out if len(out) >= 4 else ""
+
+
+_PLACE_WORDS = {
+    fold(w)
+    for w in "canada usa us america ontario quebec toronto mississauga greece hellas hellenic athens uk britain "
+    "germany deutschland france italia italy espana spain europe europa international global worldwide "
+    "north south east west central".split()
+}
 
 _ALL_FIRST_NAMES = {fold(n) for n in N.RECOGNISED_FIRST_NAMES}
 
@@ -349,6 +379,29 @@ class SurrogateFactory:
             new_domain = rng.choice(R.BRAND_WORDS).lower() + "." + tld
         return f"{new_local}@{new_domain}"
 
+    def _make_url(self, original: str, rng: random.Random) -> str:
+        """www.costco.ca/en -> www.kestrelmarket.ca/en: same shape, an invented site."""
+        m = re.match(
+            r"^(?P<scheme>[a-z]+://)?(?P<www>www\d?\.)?(?P<host>[^/\s?#]+)(?P<rest>.*)$", original.strip(), re.I
+        )
+        if not m:
+            return original
+        host = m.group("host")
+        labels = host.split(".")
+        if len(labels) < 2:
+            return original
+        suffix_len = (
+            2
+            if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in ("co", "com", "org", "net", "gov", "ac")
+            else 1
+        )
+        suffix = ".".join(labels[-suffix_len:])
+        name = (
+            R.strip_accents(rng.choice(R.BRAND_WORDS)).lower() + R.strip_accents(rng.choice(R.LAST["en"]["m"])).lower()
+        )
+        name = re.sub(r"[^a-z0-9]", "", name)
+        return f"{m.group('scheme') or ''}{m.group('www') or ''}{name}.{suffix}{m.group('rest')}"
+
     def _make_phone(self, original: str, rng: random.Random) -> str:
         keep = 0
         m = re.match(r"^\s*(\+|00)\d{1,3}[\s.-]?", original)
@@ -403,14 +456,6 @@ class SurrogateFactory:
         m = re.match(r"^[^\d]*", s)
         keep = m.end() if m else 0
         return shape_preserving(s, rng, keep_prefix=keep)
-
-    def _make_url(self, original: str, rng: random.Random) -> str:
-        return re.sub(
-            r"(?<=://)([^/:]+)",
-            lambda m: rng.choice(R.BRAND_WORDS).lower() + "." + m.group(1).rsplit(".", 1)[-1],
-            original,
-            count=1,
-        )
 
     def _make_ip(self, original: str, rng: random.Random) -> str:
         parts = original.split(".")

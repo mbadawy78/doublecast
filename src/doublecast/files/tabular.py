@@ -37,7 +37,8 @@ _KEEP = re.compile(  # never money, whatever else the label says
 )
 _MEASURE = re.compile(  # quantities: kept, unless the label is a price or cost of them ("Unit price")
     r"\b(?:sq ?ft|ft2|m2|sqm|area|units?|qty|quantity|volume|pieces|pcs|cases|pallets?|packs?|kg|tons?|tonnes?"
-    r"|litres?|liters?|headcount|fte|count|number of|capacity|speed|shifts?|people|staff)\b"
+    r"|litres?|liters?|headcount|fte|count|number of|capacity|speed|shifts?|people|staff|lines|transactions"
+    r"|entries|records|rows|visits|stores|doors|skus?)\b"
     r"|\b(?:τεμαχ|ποσοτητ|ογκ|κιλα|κιλο|τονο|ατομ|βαρδι)"
 )
 _UNIT_MONEY = re.compile(r"\b(?:price|prices|cost|costs|rent|fees?)\b|\b(?:τιμ|κοστ|ενοικ)")
@@ -116,6 +117,8 @@ def scale_value(value: float | int, factor: float, direction: str) -> float | in
     return round(raw, 6)
 
 
+_URLISH = re.compile(r"^(?:[a-z]+://)?(?:www\d?\.)?[\w-]+(?:\.[\w-]+)+(?:[/?#]\S*)?$", re.I)
+
 WHOLE_CELL = ("ORG", "PERSON", "PRODUCT", "SITE", "PROJECT", "ADDRESS")
 
 
@@ -139,6 +142,10 @@ def scramble_cell(engine: Engine, header: object, value: str, table: str = "") -
     """
     category = _header_category(header, table) if isinstance(header, str) and header.strip() else None
     stripped = value.strip()
+    if category == "URL" and _URLISH.match(stripped):
+        # a website names the company as surely as its name does: www.costco.ca
+        lead = value[: len(value) - len(value.lstrip())]
+        return f"{lead}{engine.stand_in('URL', stripped)}{value[len(value.rstrip()) :]}", {"URL": 1}
     is_code_cell = category == "ID" and any(c.isdigit() for c in stripped) and " " not in stripped
     if (
         (category in WHOLE_CELL or is_code_cell)
@@ -163,4 +170,29 @@ def scramble_cell(engine: Engine, header: object, value: str, table: str = "") -
     for sp in spans:
         if sp.start >= n:
             counts[sp.category] = counts.get(sp.category, 0) + 1
+    if own and not counts:
+        counts["ID"] = len(own)  # a real code that equals an earlier double, given its own
     return apply(value, own), counts
+
+
+def prelearn(engine: Engine, headers: list, rows, table: str = "") -> None:
+    """Learn every name in a name column before anything is scrambled.
+
+    A table often names a company twice: "COSTCO" in an alias column to the left of
+    "Costco Wholesale Canada Ltd." in the name column. Learning first means the short form is
+    caught too, wherever it appears in the file.
+    """
+    cats = {}
+    for i, h in enumerate(headers):
+        if isinstance(h, str) and h.strip():
+            c = _header_category(h, table)
+            if c in ("ORG", "PERSON"):
+                cats[i] = c
+    if not cats:
+        return
+    for row in rows:
+        for i, c in cats.items():
+            v = row[i] if i < len(row) else None
+            if isinstance(v, str) and len(v.strip()) >= 4 and not v.startswith("="):
+                engine.learn_value(c, v.strip())
+    engine.flush_learned()

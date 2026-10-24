@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.6 (2026-10-25)
+
+Found by testing on a real Dynamics 365 export: customer names reached the AI through columns
+next to the name column.
+
+- Alias and short-name columns (`NAMEALIAS`, `KNOWNAS`, search name, trade name), contact columns
+  and website columns (`PRIMARYCONTACTURL`, Website) are scrambled whole. Websites get invented
+  addresses of the same shape; public sites (GitHub, Microsoft, gov...) stay.
+- Web addresses in running text are swapped too (`www.client.ca` named the client).
+- Spreadsheets and CSVs learn every name in their name columns before scrambling, including the
+  distinctive part ("Costco" from "Costco Wholesale Canada Ltd."), so the same name in a price
+  list or a note is caught. (Spreadsheet-learned names were silently never saved before.)
+- Restore fixes found on the same files: an alias comes back as the alias ("Trio", not "Trio
+  Bakery"); a name first seen in capitals comes back in the case it was written; addresses keep
+  their capitals; a real code equal to an earlier double gets a double of its own instead of being
+  "restored" into another code; long numbers stored as text go back as numbers; counts ("Lines
+  2024") are never scaled; CSVs with quotes inside values are written correctly.
+
 ## 0.2.5 (2026-10-24)
 
 - **Folders through Doublecast, no copies.** `doublecast allow ~/Downloads` once; then in the chat,

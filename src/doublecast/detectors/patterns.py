@@ -26,9 +26,63 @@ VALIDATORS: dict[str, Callable[[str], bool]] = {
     "ean13": lambda s: ean13_valid(re.sub(r"\D", "", s)),
     "dni": dni_valid,
     "ten_digits": lambda s: len(re.sub(r"\D", "", s)) == 10,
+    "private_url": lambda s: not _public_host(s),
     # loopback, unspecified, netmasks/broadcast and the classic "1.2.3.4" example are not sensitive
     "ip": lambda s: not s.startswith(("0.", "127.", "255.")) and s != "1.2.3.4",
 }
+
+
+# Public sites stay as they are (a link to docs or a search engine names nobody); the rest of a
+# web address names a company as surely as its name does.
+_PUBLIC = {
+    "google.com",
+    "microsoft.com",
+    "github.com",
+    "apple.com",
+    "amazon.com",
+    "aws.amazon.com",
+    "wikipedia.org",
+    "youtube.com",
+    "linkedin.com",
+    "facebook.com",
+    "twitter.com",
+    "x.com",
+    "instagram.com",
+    "anthropic.com",
+    "claude.ai",
+    "openai.com",
+    "chatgpt.com",
+    "python.org",
+    "pypi.org",
+    "w3.org",
+    "mozilla.org",
+    "office.com",
+    "sharepoint.com",
+    "live.com",
+    "outlook.com",
+    "zoom.us",
+    "dropbox.com",
+    "europa.eu",
+    "who.int",
+    "gov.gr",
+    "gov.uk",
+    "canada.ca",
+    "gc.ca",
+    "irs.gov",
+    "sap.com",
+    "oracle.com",
+    "dynamics.com",
+    "powerbi.com",
+}
+
+
+def _public_host(url: str) -> bool:
+    host = re.sub(r"^[a-z]+://", "", url.strip(), flags=re.I).split("/")[0].split("?")[0].lower()
+    host = re.sub(r"^www\d?\.", "", host)
+    labels = host.split(".")
+    if labels[-1] in ("gov", "edu", "int", "mil"):
+        return True
+    return any(host == p or host.endswith("." + p) for p in _PUBLIC)
 
 
 @dataclass
@@ -89,6 +143,12 @@ _PHONE_CONTEXT = [
 ]
 
 CORE_PATTERNS: list[PatternSpec] = [
+    _spec(
+        "url",
+        "URL",
+        r"(?<![\w@/.\-])(?:https?://|www\d?\.)[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?:/[^\s<>\"'\)\]]*)?",
+        validator="private_url",
+    ),
     _spec("email", "EMAIL", r"(?<![\w.+-])[A-Za-z0-9][A-Za-z0-9._%+\-]*@[A-Za-z0-9.\-]+\.[A-Za-z]{2,24}\b"),
     _spec(
         "phone_international",

@@ -62,6 +62,14 @@ def _run(engine: Engine, src: Path, dst: Path | None, direction: str):
     if not src.exists():
         raise FileNotFoundError(src)
     dst = Path(dst) if dst else default_output(src, direction)
+    engine.from_disk = direction == "scramble"
+    try:
+        return _run_inner(engine, src, dst, direction)
+    finally:
+        engine.from_disk = False
+
+
+def _run_inner(engine: Engine, src: Path, dst: Path, direction: str):
     ext = src.suffix.lower()
     if ext in (".xlsx", ".xlsm"):
         from .xlsx import process_xlsx

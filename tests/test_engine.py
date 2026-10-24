@@ -183,3 +183,23 @@ def test_greek_names_keep_their_case(tmp_path, sentence):
     assert "Καλλέργ" not in out and "Μαυρίδ" not in out and "ΚΑΛΛΕΡΓ" not in out
     assert e.restore(out) == sentence
     e.vault.close()
+
+
+def test_alias_comes_back_as_written(engine_factory):
+    from doublecast.config import Term
+
+    e = engine_factory(terms=[Term("ORG", "Trio Bakery", ["Trio"])])
+    text = "Distributors FOB Trio; contract with Trio Bakery."
+    out = e.scramble(text).text
+    assert "Trio" not in out
+    assert e.restore(out) == text
+
+
+def test_name_known_in_capitals_comes_back_in_the_case_it_was_written(engine):
+    engine.stand_in("ORG", "SOLEROX")
+    text = "Price list: Solerox / Gala, SOLEROX club"
+    engine.learn_value("ORG", "SOLEROX")
+    engine.flush_learned()
+    out = engine.scramble(text).text
+    assert "olerox" not in out.lower()
+    assert engine.restore(out) == text

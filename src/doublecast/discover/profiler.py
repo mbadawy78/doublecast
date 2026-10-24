@@ -42,7 +42,7 @@ HEADER_KEYWORDS: dict[str, list[str]] = {
         "azienda,ragione sociale,proveedor,empresa,razon social"
     ),
     "PERSON": _f(
-        "employee,worker,staff,personnel,fullname,firstname,lastname,salesperson,sales rep,salesman,account manager,manager,driver,contact person,"
+        "employee,worker,staff,personnel,fullname,contact,firstname,lastname,salesperson,sales rep,salesman,account manager,manager,driver,contact person,"
         "contact name,owner,first name,last name,full name,surname,given name,created by,modified by,approved by,"
         "assigned to,requester,representative,agent,technician,operator,user name,username,υπαλλ,εργαζομ,πωλητ,"
         "οδηγο,οδηγου,υπευθυν,επαφη,ονοματεπωνυμο,επωνυμο,μισθωτ,χειριστ,mitarbeiter,verkaufer,fahrer,"
@@ -66,6 +66,7 @@ HEADER_KEYWORDS: dict[str, list[str]] = {
         "vat,tax id,tax no,tin,afm,αφμ,a.f.m,ust-id,ustid,steuernummer,siret,siren,tva,partita iva,p.iva,nif,cif"
     ),
     "IBAN": _f("iban"),
+    "URL": _f("url,website,web site,homepage,home page,webpage,linkedin,facebook,twitter,instagram,ιστοσελιδ"),
 }
 CODE_WORDS = _f("code,id,no,nr,number,num,key,account,acct,κωδ,κωδικος,αρ,αριθμος,nummer,numero,numéro,codice,codigo")
 # Columns that hold names but are not sensitive on their own (geography, classifications, time...).
@@ -92,7 +93,10 @@ TRANSACTION_TABLES = _f(
     "invoice,order,line,lines,trans,journal,posting,entry,entries,ledger,τιμολογ,παραγγελ,κινησ,"
     "rechnung,auftrag,buchung,facture,commande,fattura,ordine,factura,pedido"
 )
-_NAME_ONLY = _f("name,ονομα,επωνυμια,nom,nome,nombre,bezeichnung")
+_NAME_ONLY = _f(
+    "name,ονομα,επωνυμια,nom,nome,nombre,bezeichnung,alias,namealias,known as,knownas,nickname,short name,"
+    "shortname,search name,searchname,trade name,tradename,διακριτικος τιτλος"
+)
 NAME_WORDS = _f("name,ονομα,περιγραφη,description,bezeichnung,nom,libelle,nome,descrizione,nombre,descripcion")
 
 LEGAL_FORMS_RE = re.compile(
@@ -191,11 +195,14 @@ _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 def classify_header(column: str, table: str = "") -> tuple[str | None, str, bool]:
     """Classify from names only. Returns (category, matched keyword, is_code_column)."""
     col = fold(_CAMEL.sub(" ", str(column))).strip()  # "CustomerAccount" -> "customer account"
+    col = col.replace("phonetic", "spoken ")  # ORGANIZATIONPHONETICNAME is a name, not a phone
     tab = fold(_CAMEL.sub(" ", str(table))).strip()
     if not col:
         return None, "", False
     is_code = _has_keyword(col, CODE_WORDS) is not None
-    for category in ("IBAN", "TAX_ID", "EMAIL", "PHONE"):
+    if " " not in col and col.endswith(("url", "website")) or (" " not in col and "url" in col and "curl" not in col):
+        return "URL", "url", False  # PRIMARYCONTACTURL, CompanyWebsite (glued exports)
+    for category in ("IBAN", "TAX_ID", "EMAIL", "PHONE", "URL"):
         kw = _has_keyword(col, HEADER_KEYWORDS[category])
         if kw:
             return category, kw, False

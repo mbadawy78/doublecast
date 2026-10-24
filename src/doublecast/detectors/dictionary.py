@@ -135,6 +135,8 @@ class DictionaryDetector:
                 continue  # a surname alone must look like a name ("Rose", not "rose")
             meta = {"canonical": entry.canonical}
             matched = _WS.sub(" ", m.group(0))
+            if matched in self.exact and matched != _norm(entry.canonical):
+                meta["alias"] = True  # "Trio" for "Trio Bakery": its own double, so it comes back as "Trio"
             if matched not in self.exact:
                 endings = word_endings(matched)
                 if any(endings):

@@ -6,7 +6,8 @@ from pathlib import Path
 
 from ..engine import Engine
 from ..numbers import parse_number
-from .tabular import column_kind, scramble_cell
+from ..textnorm import fold
+from .tabular import column_kind, prelearn, scramble_cell
 
 
 def process_csv(engine: Engine, src: Path, dst: Path, direction: str):
@@ -28,6 +29,9 @@ def process_csv(engine: Engine, src: Path, dst: Path, direction: str):
         k = column_kind(engine, h if direction == "scramble" else engine.restore(h))
         if k:
             kinds[i] = k
+    if direction == "scramble":
+        engine.file_context = {fold(v) for row in rows for v in row if v}
+        prelearn(engine, rows[0], rows[1:], src.stem)
     nums = engine.numbers
     out_rows = []
     for r_idx, row in enumerate(rows):
@@ -56,7 +60,14 @@ def process_csv(engine: Engine, src: Path, dst: Path, direction: str):
             else:
                 new_row.append(value)
         out_rows.append(new_row)
+    buf = io.StringIO()
+    try:
+        csv.writer(buf, dialect).writerows(out_rows)
+    except csv.Error:  # the sniffed dialect cannot quote a value: standard quoting, same separator
+        buf = io.StringIO()
+        csv.writer(buf, delimiter=dialect.delimiter, lineterminator=dialect.lineterminator).writerows(out_rows)
     with open(dst, "w", encoding="utf-8", newline="") as fh:
-        csv.writer(fh, dialect).writerows(out_rows)
+        fh.write(buf.getvalue())
     engine.flush_learned()
+    engine.file_context = set()
     return counts, []

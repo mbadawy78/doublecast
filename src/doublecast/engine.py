@@ -26,7 +26,7 @@ from .detectors.tables import detect_tables
 from .discover.rules import RulesStore
 from .numbers import NumberTransformer, guess_decimal_char
 from .restore import Restorer, StreamRestorer, apply
-from .surrogates import SurrogateFactory, match_case, split_legal_form
+from .surrogates import SurrogateFactory, match_case, org_core, split_legal_form
 from .textnorm import fold, greek_stem, inflect_words, is_greek, stem_key, word_endings
 from .vault import Vault
 
@@ -172,6 +172,9 @@ class _Guard:
         return i > 0 and self.max_end[i - 1] > start
 
 
+_CODE_TOKEN = re.compile(r"(?<![\w-])(?=[\w-]*\d)[A-Za-z0-9][\w-]*[A-Za-z0-9](?![\w-])")
+
+
 @dataclass
 class ScrambleResult:
     text: str
@@ -215,6 +218,10 @@ class Engine:
         self.terms = self._all_terms()
         self.dictionary = DictionaryDetector(self.terms, self.config.allow)
         self.pattern_specs = list(CORE_PATTERNS)
+        self.file_context: set[str] = set()  # every value of the file being scrambled (see files/)
+        # True while scrambling a file from disk: its content is all real, never earlier doubles (unlike
+        # chat history passing through the proxy), so a value equal to a double is a real namesake
+        self.from_disk = False
         self.money_headers: set[str] = set()
         self.quantity_headers: set[str] = set()
         for pack in self.config.packs:
@@ -332,7 +339,12 @@ class Engine:
         terms, _ = extract_terms(category, [value])
         for t in terms:
             if category in ("PHONE", "TAX_ID", "IBAN", "ID") or learnable(category, t):
-                self._pending_learn = True
+                if self._remember(category, t):
+                    self._pending_learn = True
+            if category == "ORG":
+                core = org_core(t)  # "Costco Wholesale Canada Ltd." -> "Costco", found anywhere after
+                if core and core != t and learnable("ORG", core) and self._remember("ORG", core):
+                    self._pending_learn = True
 
     def flush_learned(self) -> None:
         if getattr(self, "_pending_learn", False):
@@ -523,8 +535,13 @@ class Engine:
             candidate = twin if (attempt == 0 and twin) else self.factory.make(category, original, attempt)
             self._used_twin = bool(twin) and attempt == 0
             key = fold(candidate)
-            if key == fold(original) or key in self._term_values or self.vault.surrogate_taken(candidate):
-                continue
+            if (
+                key == fold(original)
+                or key in self._term_values
+                or key in self.file_context
+                or self.vault.surrogate_taken(candidate)
+            ):
+                continue  # file_context: a double must not equal another value in the same file ("SAGE-39")
             own_folded = fold(original).split()
             if category == "PERSON" and set(key.split()) & {w for w in own_folded if len(w) >= 3}:
                 continue  # "Nikos Andreou" must not become "Nikos Athanasiou"
@@ -697,7 +714,7 @@ class Engine:
                     # "0,568" scaled to "1,136" reads back as one thousand: remember the exact pair
                     self.vault.try_put("MONEY" if span.action == "money" else "QUANTITY", span.text, new)
             else:
-                canonical = span.meta.get("canonical", span.text)
+                canonical = span.text if span.meta.get("alias") else span.meta.get("canonical", span.text)
                 self._used_twin = False
                 if span.category == "EMAIL":
                     new = self._email_stand_in(canonical)
@@ -718,6 +735,18 @@ class Engine:
             replacements.append((span.start, span.end, new))
             log_rows.append((span.category, span.text, new))
             kept.append(span)
+        # A real code that happens to equal an earlier double ("SAGE-39" here, a stand-in elsewhere) would
+        # be "restored" into the other value. Give it a double of its own, so it comes back as itself.
+        keys = self.vault.surrogate_keys() if self.from_disk else None
+        if keys:
+            taken = [(a, b) for a, b, _ in replacements]
+            for m in _CODE_TOKEN.finditer(text):
+                a, b = m.span()
+                if fold(m.group(0)) in keys and not any(a < te and ts < b for ts, te in taken):
+                    new = self.stand_in("ID", m.group(0))
+                    replacements.append((a, b, new))
+                    log_rows.append(("ID", m.group(0), new))
+            replacements.sort()
         self._context = set()
         self._learn(kept)
         return replacements, kept, log_rows

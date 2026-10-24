@@ -20,7 +20,8 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from ..engine import Engine
-from .tabular import column_kind, factor_for, row_kind, scale_value, scramble_cell
+from ..textnorm import fold
+from .tabular import column_kind, factor_for, prelearn, row_kind, scale_value, scramble_cell
 
 _CURRENCY_FMT = re.compile(r"[€$£]|EUR|USD|GBP|\[\$")
 _BAD_TITLE = re.compile(r"[\[\]:*?/\\]")
@@ -39,6 +40,14 @@ def process_xlsx(engine: Engine, src: Path, dst: Path, direction: str):
     counts: dict[str, int] = {}
     warnings: list[str] = []
     delta = dt.timedelta(days=engine.vault.date_offset_days())
+    if direction == "scramble":
+        engine.file_context = {
+            fold(str(v)) for ws in wb.worksheets for row in ws.iter_rows(values_only=True) for v in row if v is not None
+        }
+        for ws in wb.worksheets:
+            hr = _header_row(ws)
+            if hr:
+                prelearn(engine, [c.value for c in ws[hr]], ws.iter_rows(min_row=hr + 1, values_only=True), ws.title)
     for ws in wb.worksheets:
         # sheet title
         new_title = engine.scramble(ws.title).text if direction == "scramble" else engine.restore(ws.title)
@@ -84,7 +93,17 @@ def process_xlsx(engine: Engine, src: Path, dst: Path, direction: str):
                             for k, n in found.items():
                                 counts[k] = counts.get(k, 0) + n
                     else:
-                        cell.value = engine.restore(v)
+                        restored = engine.restore(v)
+                        if (
+                            restored != v
+                            and cell.number_format == "@"
+                            and restored.isdigit()
+                            and not restored.startswith("0")
+                        ):
+                            cell.value = int(restored)  # a long number we stored as text goes back as a number
+                            cell.number_format = "General"
+                        else:
+                            cell.value = restored
                 elif isinstance(v, bool):
                     continue
                 elif isinstance(v, (int, float)):
@@ -127,6 +146,7 @@ def process_xlsx(engine: Engine, src: Path, dst: Path, direction: str):
                     if direction == "scramble":
                         counts["DATE"] = counts.get("DATE", 0) + 1
     wb.save(dst)
+    engine.file_context = set()
     engine.flush_learned()
     if direction == "scramble" and any(ws._charts or ws._images for ws in wb.worksheets):  # noqa: SLF001
         warnings.append("Charts or images were found; check them in the scrambled copy.")

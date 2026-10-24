@@ -104,9 +104,10 @@ class Restorer:
         if not self._indexes:
             return []
         folded, index = fold_with_map(text)
-        folded = folded.replace("_", " ")
+        # as written (emails, codes) and with underscores read as spaces (Nordia_Hellas_D365.xlsx)
+        variants = [folded, folded.replace("_", " ")] if "_" in folded else [folded]
         candidates: list[tuple[int, int, str, bool]] = []
-        for ix in self._indexes:
+        for ix, folded in ((ix, v) for v in variants for ix in self._indexes):
             if ix.regex is None:
                 continue
             for m in ix.regex.finditer(folded):
@@ -119,7 +120,8 @@ class Restorer:
                 if endings and any(endings):
                     original = inflect_words(original, endings)
                 s, e = span_to_original(index, m.start(), m.end(), len(text))
-                original = match_case(text[s:e], original)
+                if not (("@" in original or "." in original) and " " not in original) or text[s:e].isupper():
+                    original = match_case(text[s:e], original)  # addresses come back exactly as written
                 word = text[s:e]
                 if "_" in word and not any(c.isspace() for c in word):
                     original = re.sub(r"\s+", "_", original)

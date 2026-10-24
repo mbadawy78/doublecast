@@ -134,3 +134,66 @@ def test_id_columns_use_the_header_as_context(engine, tmp_path):
     assert "094014201" not in csv_dst.read_text(encoding="utf-8")
     back, _, _ = restore_file(engine, csv_dst)
     assert back.read_text(encoding="utf-8") == csv_src.read_text(encoding="utf-8")
+
+
+def test_d365_export_aliases_websites_and_contacts_are_scrambled(engine, tmp_path):
+    """A real D365 customer export leaked short names, websites and contacts (Oct 2026)."""
+    src = tmp_path / "Customers_V3.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Customers_V3"
+    ws.append(["CUSTOMERACCOUNT", "NAMEALIAS", "KNOWNAS", "ORGANIZATIONNAME", "PRIMARYCONTACTURL", "Sage price list"])
+    ws.append(["C0001", "BRAMBLEX", "Bramblex", "Bramblex Wholesale Canada Ltd.", "www.bramblex.ca", "BRAMBLEX CLUB"])
+    ws.append(["C0002", "QUORVIA", "Quorvia", "Quorvia Import Export", "https://quorvia.com/en", "QUORVIA DIST"])
+    sheet = wb.create_sheet("Delivery addresses")
+    sheet.append(["CUSTOMERACCOUNT", "Customer", "Contact", "City"])
+    sheet.append(["C0001", "Bramblex Canada", "Jennifer Walsh", "Ottawa"])
+    wb.save(src)
+    dst, _, _ = scramble_file(engine, src)
+    text = " ".join(str(v) for w in load_workbook(dst).worksheets for r in w.iter_rows(values_only=True) for v in r)
+    for real in ("Bramblex", "BRAMBLEX", "bramblex", "Quorvia", "QUORVIA", "quorvia", "Jennifer", "Walsh"):
+        assert real not in text, real
+    assert "Ottawa" in text  # cities are not secrets
+    back, _, _ = restore_file(engine, dst)
+    rows = lambda p: [r for w in load_workbook(p).worksheets for r in w.iter_rows(values_only=True)]  # noqa: E731
+    assert rows(back) == rows(src)
+
+
+def test_private_web_addresses_are_swapped_public_ones_kept(engine):
+    text = "Order portal: https://www.bramblex.ca/b2b, docs on https://github.com/org/repo"
+    out = engine.scramble(text).text
+    assert "bramblex" not in out and "https://github.com/org/repo" in out
+    assert engine.restore(out) == text
+
+
+def test_a_real_code_equal_to_an_earlier_double_comes_back_as_itself(engine, tmp_path):
+    double = engine.stand_in("ID", "SAGE-11")  # a double made for another file
+    src = tmp_path / "items.csv"
+    src.write_text(f"Ref,Note\n{double},kept\nSAGE-11,real\n", encoding="utf-8")
+    dst, _, _ = scramble_file(engine, src)
+    back, _, _ = restore_file(engine, dst)
+    assert back.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
+
+
+def test_a_real_code_in_a_spreadsheet_equal_to_an_earlier_double(engine, tmp_path):
+    double = engine.stand_in("ID", "SAGE-11")
+    src = tmp_path / "items.xlsx"
+    wb = Workbook()
+    wb.active.append(["Ref", "Note"])
+    wb.active.append([double, "kept"])
+    wb.active.append(["SAGE-11", "real"])
+    wb.save(src)
+    dst, _, _ = scramble_file(engine, src)
+    back, _, _ = restore_file(engine, dst)
+    rows = lambda p: list(load_workbook(p).active.iter_rows(values_only=True))  # noqa: E731
+    assert rows(back) == rows(src)
+
+
+def test_codes_given_their_own_double_keep_their_capitals(engine, tmp_path):
+    for i in range(30, 60):
+        engine.stand_in("ID", f"SAGE-{i}")  # fill the code space with earlier doubles
+    src = tmp_path / "codes.csv"
+    src.write_text("Ref,Note\n" + "".join(f"SAGE-{i},x\n" for i in range(30, 60)), encoding="utf-8")
+    dst, _, _ = scramble_file(engine, src)
+    back, _, _ = restore_file(engine, dst)
+    assert back.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
