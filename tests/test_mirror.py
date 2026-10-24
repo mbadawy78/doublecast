@@ -118,8 +118,8 @@ def test_real_change_flows_to_twin_and_xlsx_round_trips(engine, tmp_path):
     m.sync()
     rows = list(load_workbook(real / "Kallergis_costing.xlsx").active.iter_rows(values_only=True))
     assert rows[1] == ("Kallergis", 0.21)
-    # numbers the AI writes into a money column are in its (scaled) world and come back unscaled
-    assert rows[2][0] == "New row" and rows[2][1] != 0.3
+    # a margin is a ratio: never scaled, so what the AI writes comes back as written
+    assert rows[2] == ("New row", 0.3)
 
 
 def test_twin_inside_real_is_refused(engine, tmp_path):
@@ -142,6 +142,7 @@ def test_interrupted_first_sync_leaves_no_copies_in_real_folder(engine, tmp_path
     real = _setup(tmp_path)
     m = Mirror(engine, real)
     m.twin.mkdir()
+    m._claim()  # a run that started, claimed the twin, and was stopped
     (m.twin / "leftover.md").write_text("half-written by a run that was stopped", encoding="utf-8")
     m.sync()
     m.sync()
@@ -154,3 +155,88 @@ def test_listed_names_inside_identifiers_and_file_names(engine, tmp_path):
     out = engine.scramble(text).text
     assert "Nordia" not in out and "Kallergis" not in out
     assert engine.restore(out) == text
+
+
+def _model(path, constant_in_formula=False):
+    wb = Workbook()
+    a = wb.active
+    a.title = "Assumptions"
+    for row in [
+        ["Parameter", "Value"],
+        ["Include new lines (1 = yes)", 1],
+        ["Cost index", 1.0],
+        ["Unit price", 2.5],
+        ["Units", 1000],
+        ["Days to collect", 60],
+        ["Rent per month", 4000],
+        ["Material cost per unit", 1.2],
+    ]:
+        a.append(row)
+    p = wb.create_sheet("P&L")
+    p.append(["Line", "2026"])
+    p.append(["Net sales", "=Assumptions!B4*Assumptions!B5*Assumptions!B2"])
+    p.append(["Materials", "=-Assumptions!B8*Assumptions!B5*Assumptions!B3"])
+    p.append(["Rent", "=-Assumptions!B7*12" + ("-5000" if constant_in_formula else "")])
+    p.append(["EBITDA", "=SUM(B2:B4)"])
+    p.append(["EBITDA %", "=B5/B2"])
+    p.append(["Receivables", "=B2*Assumptions!B6/365"])
+    wb.save(path)
+
+
+def test_models_keep_adding_up_and_never_show_the_factor(engine, tmp_path):
+    import pytest
+
+    from doublecast.files.recalc import find_soffice
+
+    if not find_soffice():
+        pytest.skip("LibreOffice not installed")
+    real = tmp_path / "Models"
+    real.mkdir()
+    _model(real / "plan.xlsx")
+    _model(real / "broken.xlsx", constant_in_formula=True)
+    m = Mirror(engine, real)
+    report = m.sync()
+    assert report.models_ok == 1 and len(report.models_off) == 1
+    twin = load_workbook(m.twin / m.state["files"]["plan.xlsx"]["twin"], data_only=True)
+    values = [r[1] for r in twin["Assumptions"].iter_rows(min_row=2, values_only=True)]
+    assert values[0] == 1 and values[1] == 1.0 and values[3] == 1000 and values[4] == 60  # never scaled
+    assert values[2] != 2.5 and values[5] != 4000  # money is
+    pl = [r[1] for r in twin["P&L"].iter_rows(min_row=2, values_only=True)]
+    assert all(isinstance(v, (int, float)) for v in pl)  # results filled in
+    assert abs(pl[4] - ((2.5 * 1000) - (1.2 * 1000) - 48000) / 2500) < 1e-5  # EBITDA % unchanged (to rounding)
+    note = (m.twin / NOTE).read_text(encoding="utf-8")
+    assert "Do not rely" in note and m.state["files"]["broken.xlsx"]["twin"] in note
+
+
+def test_a_second_doublecast_cannot_take_over_a_twin(engine, engine_factory, tmp_path):
+    import pytest
+
+    real = _setup(tmp_path)
+    Mirror(engine, real).sync()
+    other_home = tmp_path / "other"
+    other_home.mkdir()
+    from doublecast.engine import Engine
+
+    from .conftest import make_config
+
+    other = Engine(make_config(other_home))
+    with pytest.raises(RuntimeError, match="another Doublecast"):
+        Mirror(other, real).sync()
+    other.vault.close()
+    assert not [p for p in real.rglob("*") if "(AI" in p.name]
+
+
+def test_overwritten_files_are_backed_up_and_mass_changes_held(engine, tmp_path):
+    real = _setup(tmp_path)
+    m = Mirror(engine, real)
+    m.sync()
+    twin_notes = m.twin / m.state["files"]["notes.md"]["twin"]
+    twin_notes.write_text("edited by the AI", encoding="utf-8")
+    m.sync()
+    backups = list((m.state_path.parent / "backups").rglob("notes.md"))
+    assert backups and "Eleni Papadopoulou" in backups[0].read_text(encoding="utf-8")
+    for i in range(25):
+        (m.twin / f"new{i}.md").write_text("x", encoding="utf-8")
+    report = m.sync()
+    assert report.held == 25 and not (real / "new0.md").exists()
+    assert m.sync(accept=True).restored == 25

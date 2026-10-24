@@ -122,6 +122,18 @@ doublecast restore  answer.docx               # -> answer.restored.docx
 
 Excel keeps formulas and formats (money columns are scaled, percentages untouched); Word keeps run-level formatting, tables, headers and footers; PDFs are extracted to Markdown.
 
+### Folders, without giving the AI the folder (recommended)
+
+```bash
+doublecast allow ~/Downloads      # once; also ~/Documents, a project folder...
+```
+
+Then don't add the folder to the chat. Name it: *"Use Doublecast on Trio bakery: what's the P&L?"*
+The AI lists, searches and reads it through Doublecast (`list_folder`, `search_folder`,
+`read_file`): file names and contents arrive scrambled, nothing is copied, and anything it saves
+(`save_file`) lands in your folder with the real values back. Places you didn't allow can't be
+reached. Install LibreOffice to let it see formula results in Excel models.
+
 ### Folders: a scrambled twin (Claude app, Cowork, any agent with folder access)
 
 When an AI gets access to a folder it can open anything in it, with its own tools. Asking it to

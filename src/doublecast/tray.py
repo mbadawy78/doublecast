@@ -103,8 +103,12 @@ class Model:
             return ["No mirrored folders (doublecast mirror <folder>)"]
         out = []
         for m in self.mirrors:
+            if m.error:
+                out.append(f"⚠ {m.src.name}: stopped. {m.error[:80]}")
+                continue
             when = f"synced {m.last_sync}" if m.last_sync else "first sync running…"
-            out.append(f"{m.src.name} → {m.twin.name}  ·  {when}")
+            held = f"  ·  {m.last_report.held} AI changes held" if m.last_report.held else ""
+            out.append(f"{m.src.name} → {m.twin.name}  ·  {when}{held}")
         return out
 
     # ------------------------------------------------------------ actions

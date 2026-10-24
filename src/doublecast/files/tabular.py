@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import re
 
 from ..engine import Engine
 from ..restore import apply
@@ -21,6 +22,50 @@ def column_kind(engine: Engine, header: object) -> str | None:
         return "money"
     if engine.config.scale_quantities and any(_word_in(word, h) for word in engine.quantity_headers):
         return "quantity"
+    return None
+
+
+# Row labels in financial models ("Cost index", "Days to collect", "Rent per sq ft").
+# Models keep money and non-money inputs in one "Value" column or under year columns,
+# so the row's label decides. Scaling a switch or an index breaks the model and,
+# worse, a scaled 1 shows the secret factor itself.
+_KEEP = re.compile(  # never money, whatever else the label says
+    r"%|\b(?:percent|ratio|share|growth|index|factor|switch|flag|scenario|version|multiple|elasticity|yield"
+    r"|days?|months?|weeks?|years?|hours?|minutes?|age|term|dso|dpo|dio|lead time"
+    r"|rate|margin|markup|discount)\b|\(\s*[01]\s*=|\b[01]\s*=\s*\w|\byes\b|\bno\b"
+    r"|\b(?:ποσοστ|δεικτ|ημερ|μηνες|μηνων|ετη\b|περιθωρ|εκπτωσ)"
+)
+_MEASURE = re.compile(  # quantities: kept, unless the label is a price or cost of them ("Unit price")
+    r"\b(?:sq ?ft|ft2|m2|sqm|area|units?|qty|quantity|volume|pieces|pcs|cases|pallets?|packs?|kg|tons?|tonnes?"
+    r"|litres?|liters?|headcount|fte|count|number of|capacity|speed|shifts?|people|staff)\b"
+    r"|\b(?:τεμαχ|ποσοτητ|ογκ|κιλα|κιλο|τονο|ατομ|βαρδι)"
+)
+_UNIT_MONEY = re.compile(r"\b(?:price|prices|cost|costs|rent|fees?)\b|\b(?:τιμ|κοστ|ενοικ)")
+_MONEY = re.compile(
+    r"[€$£]|\b(?:eur|usd|cad|gbp|chf|cost|costs|price|prices|rent|cash|revenue|revenues|sales|turnover|payroll|salary"
+    r"|salaries|wages?|amount|budget|limit|balance|capex|opex|ebitda|ebit|profit|loss|expenses?|fees?|spend|investment"
+    r"|loan|debt|payment|payments|income|value|fund|funding|equity|price list|tax|taxes|interest expense|insurance"
+    r"|materials?|energy|freight|distribution|marketing|promotion|utilities|maintenance|depreciation|cogs|overheads?)\b"
+    r"|\b(?:τιμ|κοστ|ενοικ|ταμει|πωλησ|εσοδ|μισθ|δαπαν|ποσο|κερδ|ζημι|δανει|επενδυσ)"
+)
+_PRICE = re.compile(r"\b(?:rate|price|cost|rent|fee)s?\b.*\bper\b|\bper\b.*\b(?:price|cost|rent)\b|[€$£]\s*/")
+
+
+def row_kind(label: object) -> str | None:
+    """'money', 'keep' or None (no opinion) for a model row, from its label."""
+    if not isinstance(label, str):
+        return None
+    t = fold(label)
+    if not t.strip():
+        return None
+    if _PRICE.search(t):
+        return "money"  # "Rate per sq ft", "Cost per pack"
+    if _KEEP.search(t):
+        return "keep"
+    if _MEASURE.search(t):
+        return "money" if _UNIT_MONEY.search(t) else "keep"
+    if _MONEY.search(t):
+        return "money"
     return None
 
 

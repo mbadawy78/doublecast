@@ -48,6 +48,8 @@ SKIP_DIRS = {
 SCRAMBLED = {".xlsx", ".xlsm", ".docx", ".csv", ".tsv", ".pdf"} | TEXT_EXTENSIONS
 RESTORABLE = {".xlsx", ".xlsm", ".docx", ".csv", ".tsv"} | TEXT_EXTENSIONS
 NOTE = "_DOUBLECAST.md"
+MARKER = ".doublecast-twin"  # which Doublecast owns this twin (a random id, nothing else)
+MAX_BRING_BACK = 20  # more AI changes than this in one go looks like a fault, not work: hold them
 STATE_VERSION = 1
 MAX_TEXT_BYTES = 20_000_000
 _SYNC_LOCK = threading.Lock()  # one engine, several mirrors: sync one at a time
@@ -90,6 +92,10 @@ class Report:
     skipped: dict[str, int] = field(default_factory=dict)
     failed: int = 0
     values: int = 0
+    models_ok: int = 0
+    models_off: list[str] = field(default_factory=list)
+    not_recalculated: int = 0
+    held: int = 0
 
     def line(self) -> str:
         skipped = sum(self.skipped.values())
@@ -100,6 +106,12 @@ class Report:
             parts.append(f"{skipped} not copied")
         if self.failed:
             parts.append(f"{self.failed} failed")
+        if self.models_ok or self.models_off:
+            parts.append(f"{self.models_ok} model(s) checked and adding up")
+        if self.models_off:
+            parts.append(f"{len(self.models_off)} model(s) NOT adding up")
+        if self.held:
+            parts.append(f"{self.held} AI change(s) HELD (too many at once; check, then --accept)")
         return ", ".join(parts)
 
 
@@ -116,6 +128,7 @@ class Mirror:
         self.state_path = engine.config.home / "mirrors" / f"{key}.json"
         self.state = self._load()
         self.last_report = Report()
+        self.error: str | None = None
         self.last_sync: str | None = self.state.get("last_sync")
 
     # ------------------------------------------------------------ state
@@ -204,13 +217,31 @@ class Mirror:
                     yield os.path.relpath(full, root), full
 
     # ------------------------------------------------------------ sync
-    def sync(self) -> Report:
+    def _claim(self) -> None:
+        """One twin, one Doublecast. Two vaults writing one twin feed each other's files back as new."""
+        import secrets
+
+        owner = self.state.setdefault("owner", secrets.token_hex(8))
+        marker = self.twin / MARKER
+        if marker.exists():
+            if marker.read_text(encoding="utf-8").strip() != owner:
+                raise RuntimeError(
+                    f"{self.twin} is kept by another Doublecast (another computer, vault or workspace). "
+                    "Stop that one, or give this mirror a different twin folder (--to)."
+                )
+            return
+        if any(self._walk(self.twin)):
+            raise RuntimeError(f"{self.twin} already has files in it. Give the twin an empty or new folder.")
+        marker.write_text(owner, encoding="utf-8")
+
+    def sync(self, accept: bool = False) -> Report:
         with _SYNC_LOCK:
             report = Report()
             self.twin.mkdir(parents=True, exist_ok=True)
+            self._claim()
             first = not self.state.get("last_sync")
             self._pull(report)
-            self._push(report, adopt_new=not first)
+            self._push(report, adopt_new=not first, accept=accept)
             self._write_note(report)
             self.last_sync = dt.datetime.now().strftime("%H:%M:%S")
             self.state["last_sync"] = self.last_sync
@@ -250,20 +281,57 @@ class Mirror:
                 continue
             report.values += sum(stats.values())
             report.scrambled += 1
+            model = self._model_check(real, target, twin_rel, report) if ext == ".xlsx" else None
             files[real_rel] = {
                 "twin": twin_rel,
                 "sig": sig,
                 "hash": _sha(target),
                 "kind": "derived" if ext == ".pdf" else "scrambled",
             }
+            if model:
+                files[real_rel]["model"] = model
 
-    def _push(self, report: Report, adopt_new: bool = True) -> None:
+    def _model_check(self, real: Path, target: Path, twin_rel: str, report: Report) -> list | None:
+        """Fill in formula results in the twin, and check the model still adds up."""
+        from .files.recalc import check_model, find_soffice, has_formulas, recalc
+
+        try:
+            if not has_formulas(real):
+                return None
+            if not find_soffice() or not recalc(target):
+                report.not_recalculated += 1
+                return None
+            compared, off = check_model(real, target, float(self.engine.numbers.k_money))
+        except Exception:  # noqa: BLE001
+            report.not_recalculated += 1
+            return None
+        if off:
+            report.models_off.append(twin_rel)
+        else:
+            report.models_ok += 1
+        return [compared, off]
+
+    def _push(self, report: Report, adopt_new: bool = True, accept: bool = False) -> None:
         """Twin -> real: the AI's edits and new files.
 
         Until a first sync has finished, unknown files in the twin are leftovers of an interrupted
-        run, not the AI's work, so they are not copied back."""
+        run, not the AI's work, so they are not copied back. More than MAX_BRING_BACK changes at
+        once are held until accepted."""
         files = self.state["files"]
         by_twin = {e["twin"]: k for k, e in files.items()}
+        ignored = set(self.state.get("ignored", []))
+        pending = []
+        for twin_rel, twin_path in self._walk(self.twin):
+            entry = files.get(by_twin.get(twin_rel, ""), {})
+            if twin_rel in ignored or (entry and entry.get("kind") == "derived"):
+                continue
+            if not entry and not adopt_new:
+                continue
+            if _sha(twin_path) != entry.get("hash"):
+                pending.append(twin_rel)
+        if len(pending) > MAX_BRING_BACK and not accept:
+            report.held = len(pending)
+            return
         for twin_rel, twin_path in self._walk(self.twin):
             real_rel = by_twin.get(twin_rel)
             h = _sha(twin_path)
@@ -297,6 +365,15 @@ class Mirror:
 
     def _restore_to(self, twin_path: Path, real: Path, report: Report, conflict: bool = False) -> bool:
         real.parent.mkdir(parents=True, exist_ok=True)
+        if real.exists():  # keep the version being replaced, outside the folder
+            stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = self.state_path.parent / "backups" / self.state_path.stem / stamp / real.relative_to(self.src)
+            try:
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(real, backup)
+            except OSError:
+                report.failed += 1
+                return False  # no backup, no overwrite
         try:
             if twin_path.suffix.lower() in RESTORABLE:
                 self._atomic(lambda tmp: restore_file(self.engine, twin_path, tmp), real)
@@ -348,6 +425,17 @@ class Mirror:
         )
         if skipped:
             text += f"\n{skipped} file(s) were not copied because they cannot be scrambled ({kinds}).\n"
+        off = sorted(e["twin"] for e in self.state["files"].values() if (e.get("model") or [0, 0])[1])
+        if off:
+            text += (
+                "\n**Do not rely on the figures in these spreadsheets.** After scrambling, some formula results\n"
+                "no longer match the original model:\n\n" + "".join(f"- `{x}`\n" for x in off)
+            )
+        if report.not_recalculated:
+            text += (
+                f"\n{report.not_recalculated} spreadsheet model(s) could not be recalculated (LibreOffice is not "
+                "installed): formula cells hold formulas without results. Open them with a tool that recalculates.\n"
+            )
         path = self.twin / NOTE
         try:
             if not path.exists() or path.read_text(encoding="utf-8") != text:
@@ -360,10 +448,11 @@ class Mirror:
         while not stop.is_set():
             try:
                 report = self.sync()
+                self.error = None
                 if on_sync:
                     on_sync(self, report)
-            except Exception:  # noqa: BLE001 - keep watching
-                pass
+            except Exception as exc:  # noqa: BLE001 - keep watching, show why in the menu
+                self.error = str(exc)
             stop.wait(interval)
 
 

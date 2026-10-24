@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.5 (2026-10-24)
+
+- **Folders through Doublecast, no copies.** `doublecast allow ~/Downloads` once; then in the chat,
+  name a folder instead of adding it. New connector tools `list_folder`, `search_folder`,
+  `read_file`, `save_file`: names and contents come back scrambled, saves get the real values back,
+  replaced files are backed up, and nothing outside the allowed places can be reached.
+- Spreadsheet models: a row's label decides what is money ("Cash at bank" under a "Value" or
+  "2026" column) and what never is (switches, indices, %, days, units, area). A cell holding 1 is
+  never scaled, so the factor can't be read off. Formula results are filled in with LibreOffice
+  when it is installed, and mirrored models are checked against the original.
+- Mirror safety, after a real incident: one twin per Doublecast (a second one is refused), every
+  replaced real file is backed up first, and more than 20 AI changes at once are held until
+  accepted (`--accept`).
+
 ## 0.2.4 (2026-10-21)
 
 - `doublecast mirror FOLDER`: a scrambled twin of a folder (`FOLDER-AI`) for AI tools with folder

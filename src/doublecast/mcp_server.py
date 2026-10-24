@@ -26,7 +26,10 @@ from .engine import Engine
 from .files import TEXT_EXTENSIONS, restore_file, scramble_file
 
 INSTRUCTIONS = (
-    "Doublecast protects sensitive business data. Use read_scrambled to read local files: "
+    'Doublecast protects sensitive business data. When the user names a folder or file ("use Doublecast on '
+    'Trio bakery"), use list_folder, search_folder and read_file: names and contents come back scrambled, '
+    "and nothing is copied. Use the paths exactly as list_folder shows them. Save results with save_file. "
+    "Never use other file tools on the user's folders. Use read_scrambled to read other local files: "
     "you will see realistic stand-ins (fake company names, people, IDs, and money scaled by a secret "
     "factor, so ratios are correct but absolute amounts are not real). Work with the stand-ins as if they "
     "were real. To save results, call write_restored: real values are restored on the user's machine. "
@@ -75,6 +78,41 @@ def build_server():
 
     server = Server("doublecast", instructions=INSTRUCTIONS)
     engine = _engine()
+
+    from .gateway import Gateway, allowed
+
+    gate = Gateway(engine)
+
+    def _safe(fn, *a, **kw) -> str:
+        gate.roots = [r.resolve() for r in allowed(engine.config.home)]  # pick up `doublecast allow` live
+        try:
+            return fn(*a, **kw)
+        except (PermissionError, FileNotFoundError, FileExistsError, NotADirectoryError, ValueError) as exc:
+            return f"Refused: {exc}"
+
+    @server.tool()
+    def list_folder(path: str, depth: int = 1) -> str:
+        """List a folder the user named (e.g. "Trio bakery"), with scrambled file and folder names.
+        depth=2 or 3 shows subfolders too. Use the returned paths with read_file."""
+        return _safe(gate.list_folder, path, depth)
+
+    @server.tool()
+    def search_folder(path: str, text: str) -> str:
+        """Find files under a folder whose name or text contains `text`. Results are scrambled."""
+        return _safe(gate.search, path, text)
+
+    @server.tool()
+    def read_file(path: str, offset: int = 0) -> str:
+        """Read a file from list_folder or search_folder, scrambled as it is read (Excel shows each sheet with
+        row numbers and formula results). Long files come in pages: call again with the offset it gives."""
+        return _safe(gate.read, path, offset)
+
+    @server.tool()
+    def save_file(path: str, content: str, overwrite: bool = False) -> str:
+        """Save text (md, txt, csv, html, json...) into a folder list_folder showed you, e.g.
+        "Trio bakery/IT/summary.md". Real values are put back on the user's computer; replaced files are
+        backed up."""
+        return _safe(gate.write, path, content, overwrite)
 
     @server.tool()
     def read_scrambled(path: str) -> str:

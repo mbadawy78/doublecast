@@ -20,7 +20,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from ..engine import Engine
-from .tabular import column_kind, factor_for, scale_value, scramble_cell
+from .tabular import column_kind, factor_for, row_kind, scale_value, scramble_cell
 
 _CURRENCY_FMT = re.compile(r"[€$£]|EUR|USD|GBP|\[\$")
 _BAD_TITLE = re.compile(r"[\[\]:*?/\\]")
@@ -59,6 +59,16 @@ def process_xlsx(engine: Engine, src: Path, dst: Path, direction: str):
                     kinds[cell.column] = kind
 
         for row in ws.iter_rows():
+            row_label = None
+            for c in row:
+                if isinstance(c.value, str) and c.value.strip() and not c.value.startswith("="):
+                    row_label = c.value if direction == "scramble" else engine.restore(c.value)
+                    break
+            rkind = (
+                row_kind(row_label)
+                if row_label and not any(sp.category in ("ORG", "PERSON") for sp in engine.detect(row_label))
+                else None
+            )
             for cell in row:
                 v = cell.value
                 if v is None:
@@ -86,6 +96,16 @@ def process_xlsx(engine: Engine, src: Path, dst: Path, direction: str):
                     kind = kinds.get(cell.column)
                     if kind is None and engine.config.scale_money and _CURRENCY_FMT.search(fmt):
                         kind = "money"
+                    if rkind == "keep" or row_kind(headers.get(cell.column)) == "keep":
+                        kind = None  # a switch, index, %, days, units, area: never scaled
+                    elif (
+                        rkind == "money"
+                        and engine.config.scale_money
+                        and not (header_row and cell.column == min(headers or {0: 0}))
+                    ):
+                        kind = kind or "money"  # "Cash at bank" under a "Value" or "2026" column
+                    if kind and v == 1:
+                        kind = None  # a scaled 1 would show the factor itself
                     if kind:
                         cell.value = scale_value(v, factor_for(engine, kind), direction)
                         if direction == "scramble":

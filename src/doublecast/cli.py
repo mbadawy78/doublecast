@@ -613,6 +613,26 @@ def cmd_mirror(args) -> int:
     return 0
 
 
+def cmd_allow(args) -> int:
+    from . import gateway
+
+    cfg = load_config(getattr(args, "config", None))
+    if args.remove:
+        ok = gateway.disallow(cfg.home, Path(args.folder))
+        print("Removed." if ok else "That folder was not allowed.")
+        return 0
+    if args.folder:
+        folder = gateway.allow(cfg.home, Path(args.folder))
+        print(f"{GREEN}Allowed{RESET} {folder}")
+        print(
+            f'{DIM}In the Claude app, don\'t add this folder to the chat; name it: "Use Doublecast on <folder>".{RESET}'
+        )
+    items = gateway.allowed(cfg.home)
+    if not args.folder:
+        print("\n".join(str(p) for p in items) or "Nothing allowed yet. Example: doublecast allow ~/Downloads")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     ok = True
     cfg = load_config(args.config)
@@ -747,7 +767,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--interval", type=float, default=3.0, help="seconds between checks (default 3)")
     s.add_argument("--list", action="store_true", help="show mirrored folders")
     s.add_argument("--remove", action="store_true", help="stop mirroring this folder")
+    s.add_argument("--accept", action="store_true", help="bring back AI changes that were held (too many at once)")
     s.set_defaults(func=cmd_mirror)
+    s = sub.add_parser("allow", help="let the AI open a place through Doublecast (scrambled, no copies)")
+    s.add_argument("folder", nargs="?", help="e.g. ~/Downloads (no folder: show what is allowed)")
+    s.add_argument("--remove", action="store_true", help="stop allowing this folder")
+    s.set_defaults(func=cmd_allow)
     s = sub.add_parser("doctor", help="check the installation")
     s.set_defaults(func=cmd_doctor)
     return p
