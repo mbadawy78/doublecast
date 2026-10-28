@@ -147,6 +147,10 @@ before they reach your data. Discovery reads your customers, suppliers and peopl
 same connector. `doublecast connect powerbi --undo` puts it back. Connectors added in claude.ai
 run in the cloud and cannot be wrapped.
 
+**Seeing the real answer.** The chat shows the AI's answer in stand-ins. After answering from
+Doublecast data the AI calls `show_answer`: the same answer, with your real names and amounts,
+opens in your browser, built on your computer. Nothing real goes back to the AI.
+
 **Leak alarm.** Everything leaving through these routes is checked against every name Doublecast
 knows. If one gets through, `doublecast status` lists it (masked) and the menu-bar icon shows 🛡⚠.
 

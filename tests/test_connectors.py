@@ -153,3 +153,49 @@ def test_discover_run_uses_a_connected_powerbi_without_config(tmp_path, monkeypa
 
     e = Engine(load_config(None))
     assert "Brightvale" not in e.scramble("Order from Brightvale Foods Ltd. today").text
+
+
+def test_show_answer_opens_the_real_values_and_returns_none_of_them(tmp_path):
+    home = tmp_path / "home"
+    env = {**os.environ, "DOUBLECAST_HOME": str(home), "PATH": "/nonexistent"}  # no browser in tests
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "doublecast", "wrap", "--name", "powerbi", "--", sys.executable, FAKE],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    try:
+        init = _rpc(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        assert "show_answer" in init["result"]["instructions"]
+        tools = _rpc(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        assert "show_answer" in [t["name"] for t in tools["result"]["tools"]]
+        q = {"workspace": "ws", "dataset": "sales", "dax_query": "EVALUATE Customers"}
+        res = _rpc(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "powerbi_run_dax", "arguments": {"params": q}},
+            },
+        )
+        rows = json.loads(json.loads(res["result"]["content"][0]["text"])["result"])["rows"]
+        double, sales = rows[0]["Customers[Customer Name]"], rows[0]["[Sales]"]
+        answer = f"## Top customers\n\n| Customer | Sales |\n|---|---:|\n| {double} | €{sales:,.2f} |\n"
+        shown = _rpc(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "show_answer", "arguments": {"title": "Top customers", "markdown": answer}},
+            },
+        )
+        reply = json.dumps(shown)
+        assert "Brightvale" not in reply and "1,250,000" not in reply
+        page = next((home / "answers").glob("*.html")).read_text(encoding="utf-8")
+        assert "Brightvale Foods Ltd." in page and "1,250,000.50" in page and 'charset="utf-8"' in page
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=10)

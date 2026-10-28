@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.8 (2026-10-28)
+
+- **`show_answer`:** the AI's answer, with the real names and amounts, opens in your browser. The
+  chat can only show stand-ins; after answering from Doublecast data the AI calls `show_answer`,
+  the real values are put back on your computer, and a clean page opens (saved in
+  `~/.doublecast/answers/`, owner-only). Nothing real goes back to the AI. Available in the
+  Doublecast connector and added automatically to every connector behind `doublecast connect`.
+- `doublecast discover` reads a connected Power BI with no config at all.
+- Only one menu-bar icon runs at a time.
+
 ## 0.2.7 (2026-10-28)
 
 Less left to habit.

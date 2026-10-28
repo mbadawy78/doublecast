@@ -161,8 +161,17 @@ def run_wrap(engine, command: list[str], name: str = "connector") -> int:
         encoding="utf-8",
         bufsize=1,
     )
+    from .answers import CONFIRMATION, TOOL, show_answer
+
     calls: dict[object, str] = {}
+    lists: set = set()
+    inits: set = set()
     out_lock = threading.Lock()
+
+    def emit(msg: dict) -> None:
+        with out_lock:
+            sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
 
     def to_connector():
         assert child.stdin is not None
@@ -173,8 +182,24 @@ def run_wrap(engine, command: list[str], name: str = "connector") -> int:
                 child.stdin.write(line)
                 child.stdin.flush()
                 continue
+            if isinstance(msg, dict) and msg.get("method") == "tools/list" and "id" in msg:
+                lists.add(msg["id"])
+            if isinstance(msg, dict) and msg.get("method") == "initialize" and "id" in msg:
+                inits.add(msg["id"])
             if isinstance(msg, dict) and msg.get("method") == "tools/call" and "id" in msg:
                 params = msg.get("params") or {}
+                if params.get("name") == TOOL["name"]:  # ours: answered here, never sent to the connector
+                    args = params.get("arguments") or {}
+                    with scr.lock:
+                        show_answer(engine, str(args.get("markdown", "")), str(args.get("title", "")))
+                    emit(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": msg["id"],
+                            "result": {"content": [{"type": "text", "text": CONFIRMATION}]},
+                        }
+                    )
+                    continue
                 calls[msg["id"]] = str(params.get("name", "tool"))
                 if "arguments" in params:
                     params["arguments"] = scr.arguments(params["arguments"])
@@ -194,7 +219,20 @@ def run_wrap(engine, command: list[str], name: str = "connector") -> int:
             msg = json.loads(line)
         except ValueError:
             continue  # stray output from the connector must never reach the AI unscrambled
-        if isinstance(msg, dict) and msg.get("id") in calls and isinstance(msg.get("result"), dict):
+        if isinstance(msg, dict) and msg.get("id") in inits and isinstance(msg.get("result"), dict):
+            inits.discard(msg["id"])
+            note = (
+                "This connector runs through Doublecast: names in results are stand-ins and money is scaled "
+                "by a secret factor (ratios, rankings and % are true). Use the stand-ins as they are. After "
+                "answering from this data, call show_answer with your answer so the user sees the real values."
+            )
+            msg["result"]["instructions"] = ((msg["result"].get("instructions") or "") + "\n\n" + note).strip()
+        elif isinstance(msg, dict) and msg.get("id") in lists and isinstance(msg.get("result"), dict):
+            lists.discard(msg["id"])
+            tools = msg["result"].get("tools")
+            if isinstance(tools, list) and not any(t.get("name") == TOOL["name"] for t in tools):
+                msg["result"]["tools"] = [*tools, TOOL]
+        elif isinstance(msg, dict) and msg.get("id") in calls and isinstance(msg.get("result"), dict):
             tool = calls.pop(msg["id"])
             msg["result"] = scr.result(msg["result"], f"{name}/{tool}")
         elif isinstance(msg, dict) and msg.get("id") in calls and "error" in msg:
@@ -202,8 +240,6 @@ def run_wrap(engine, command: list[str], name: str = "connector") -> int:
             err = msg["error"]
             if isinstance(err, dict) and isinstance(err.get("message"), str):
                 err["message"] = scr.text(err["message"])
-        with out_lock:
-            sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
+        emit(msg)
     engine.activity.flush()
     return child.wait()

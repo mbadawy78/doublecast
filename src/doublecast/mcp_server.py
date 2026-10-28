@@ -29,7 +29,9 @@ INSTRUCTIONS = (
     'Doublecast protects sensitive business data. When the user names a folder or file ("use Doublecast on '
     'Trio bakery"), use list_folder, search_folder and read_file: names and contents come back scrambled, '
     "and nothing is copied. Use the paths exactly as list_folder shows them. Save results with save_file. "
-    "Never use other file tools on the user's folders. Use read_scrambled to read other local files: "
+    "Never use other file tools on the user's folders. After every answer built on data from Doublecast "
+    "(folders or a connector such as Power BI), call show_answer with that answer in Markdown so the user "
+    "sees it with the real values. Use read_scrambled to read other local files: "
     "you will see realistic stand-ins (fake company names, people, IDs, and money scaled by a secret "
     "factor, so ratios are correct but absolute amounts are not real). Work with the stand-ins as if they "
     "were real. To save results, call write_restored: real values are restored on the user's machine. "
@@ -113,6 +115,18 @@ def build_server():
         "Trio bakery/IT/summary.md". Real values are put back on the user's computer; replaced files are
         backed up."""
         return _safe(gate.write, path, content, overwrite)
+
+    @server.tool()
+    def show_answer(markdown: str, title: str = "") -> str:
+        """Show the user your answer with the real names and amounts. Call this after every answer that
+        uses data from Doublecast (folders or a connector such as Power BI): pass the answer as Markdown,
+        exactly as you wrote it. It opens in the user's browser with the real values; you only get a
+        confirmation."""
+        from .answers import CONFIRMATION
+        from .answers import show_answer as _show
+
+        _show(engine, markdown, title)
+        return CONFIRMATION
 
     @server.tool()
     def read_scrambled(path: str) -> str:
