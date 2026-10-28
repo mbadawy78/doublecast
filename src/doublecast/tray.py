@@ -229,8 +229,26 @@ def autostart(enable: bool = True) -> str:
 
 
 # ---------------------------------------------------------------- toolkits
+def _already_running(home: Path) -> bool:
+    """One icon only: a second `doublecast tray` (e.g. login item + a manual start) exits."""
+    pid_file = home / "tray.pid"
+    try:
+        pid = int(pid_file.read_text().strip())
+        if pid != os.getpid():
+            os.kill(pid, 0)
+            return True
+    except (OSError, ValueError):
+        pass
+    home.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()))
+    return False
+
+
 def run_tray(workspace: str | None = None) -> int:
     model = Model(workspace)
+    if _already_running(model.cfg.home):
+        print("Doublecast is already in the menu bar.", file=sys.stderr)
+        return 0
     model.start_mirrors()
     if platform.system() == "Darwin":
         return _run_macos(model)

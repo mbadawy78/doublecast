@@ -135,3 +135,21 @@ def test_scrambler_keeps_schema_and_counts(engine):
     data = json.loads(out)
     assert data["columns"] == ["Customers[Customer Name]"] and data["row_count_returned"] == 2
     assert "Nordia" not in out and "Kallergis" not in out
+
+
+def test_discover_run_uses_a_connected_powerbi_without_config(tmp_path, monkeypatch, capsys):
+    from doublecast.cli import main
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "connectors.json").write_text(
+        json.dumps({"powerbi": {"command": sys.executable, "args": [FAKE], "env": {}}}), encoding="utf-8"
+    )
+    monkeypatch.setenv("DOUBLECAST_HOME", str(home))
+    assert main(["discover", "run", "--yes", "--quiet"]) == 0
+    assert "No sources configured" not in capsys.readouterr().out
+    from doublecast.config import load_config
+    from doublecast.engine import Engine
+
+    e = Engine(load_config(None))
+    assert "Brightvale" not in e.scramble("Order from Brightvale Foods Ltd. today").text

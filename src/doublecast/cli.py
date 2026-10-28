@@ -469,7 +469,9 @@ def cmd_discover(args) -> int:
             return 2
         sources = [FolderSource(Path(args.target).name or "files", args.target)]
     else:
-        if not cfg.discover_sources:
+        from .connectors import registered as _connected
+
+        if not cfg.discover_sources and "powerbi" not in _connected(cfg.home):
             print("No sources configured. Add them under discover: sources: in your config (see docs/discover.md),")
             print("or scan a folder of Excel/CSV files now: doublecast discover path ~/Documents/masterdata")
             return 1
