@@ -314,6 +314,9 @@ Full reference: [docs/configuration.md](docs/configuration.md). Industry packs: 
 
 ## How this was built
 
+The full record (timeline, architecture, every benchmark, and what went wrong on the way) is in
+[docs/BUILD-HISTORY.md](docs/BUILD-HISTORY.md).
+
 Doublecast was written by an operations executive, not a software engineer, working with an AI
 coding assistant (Claude). The design decisions, the requirements from daily work in a Greek
 food manufacturer, and the testing on real business documents are human; most of the code was
