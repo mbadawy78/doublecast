@@ -127,6 +127,13 @@ def create_app(engine: Engine, client: httpx.AsyncClient | None = None) -> Starl
                             walker.binary_documents,
                         )
                     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                    leaked = engine.check_and_log_leaks(body.decode("utf-8"), f"{provider}{request.url.path}")
+                    if leaked:
+                        log.warning(
+                            "%d known value(s) still visible after scrambling (see `doublecast status`)", leaked
+                        )
+                        if cfg.mode == "block":
+                            return _blocked(f"{leaked} known value(s) could not be scrambled")
                 except Exception as exc:  # noqa: BLE001
                     stats.failures += 1
                     if cfg.mode == "block":

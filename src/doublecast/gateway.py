@@ -216,6 +216,7 @@ class Gateway:
             dst = Path(tmp) / ("doc" + (".md" if ext == ".pdf" else ext))
             scramble_file(self.engine, real, dst)
             text = _text_of(dst, self.engine)
+        self.engine.check_and_log_leaks(text, str(real))  # the alarm: a known name that got through
         self.engine.activity.flush()
         page = text[offset : offset + PAGE]
         if offset + PAGE < len(text):

@@ -114,10 +114,38 @@ def build_sources(cfg: Config, vault, prompt: Callable[[str], None] | None = Non
                 base = f"https://api.businesscentral.dynamics.com/v2.0/{tenant}/{env}/api/v2.0"
                 scopes, headers = ["https://api.businesscentral.dynamics.com/.default"], None
             sources.append(ODataSource(name, api(scopes, headers), base, kind, spec.get("entities")))
+        elif kind in ("connector", "powerbi-connector"):
+            from ..connectors import StdioClient
+            from .sources.powerbi import McpPowerBISource
+
+            sources.append(
+                McpPowerBISource(
+                    name,
+                    StdioClient.for_connector(cfg.home, spec.get("connector", "powerbi")),
+                    spec.get("datasets"),
+                    spec.get("tables"),
+                )
+            )
         else:
             raise ValueError(
-                f"Unknown discovery source type '{kind}'. Use folder, sql, m365, powerbi, d365fo, dataverse or businesscentral."
+                f"Unknown discovery source type '{kind}'. Use folder, sql, m365, powerbi, powerbi-connector, d365fo, "
+                "dataverse or businesscentral."
             )
+    # a Power BI connector put behind Doublecast (`doublecast connect powerbi`) is read too, with no setup
+    from ..connectors import registered
+
+    named = {s.name for s in sources}
+    if (
+        "powerbi" in registered(cfg.home)
+        and "powerbi-connector" not in named
+        and not any(
+            str(spec.get("type", "")).lower() in ("connector", "powerbi-connector") for spec in cfg.discover_sources
+        )
+    ):
+        from ..connectors import StdioClient
+        from .sources.powerbi import McpPowerBISource
+
+        sources.append(McpPowerBISource("powerbi-connector", StdioClient.for_connector(cfg.home, "powerbi")))
     return sources
 
 

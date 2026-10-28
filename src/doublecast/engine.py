@@ -751,6 +751,30 @@ class Engine:
         self._learn(kept)
         return replacements, kept, log_rows
 
+    def leaks(self, text: str) -> list[tuple[str, str]]:
+        """Known sensitive values (your terms, discovered and learned names) still in text that is
+        about to leave. Run on scrambled output; anything found is a leak to report."""
+        if not text:
+            return []
+        if self._rules_dirty:
+            self._add_learned_terms()
+        keys = self.vault.surrogate_keys()
+        found = []
+        for det in (self.dictionary, self.recent_dictionary):
+            if det is None:
+                continue
+            for sp in det.detect(text):
+                if fold(sp.text).strip() in keys or fold(sp.text).strip() in self.allow:
+                    continue  # a double that shares a word with a real name
+                found.append((sp.category, sp.text))
+        return found
+
+    def check_and_log_leaks(self, text: str, where: str) -> int:
+        hits = self.leaks(text)
+        if hits:
+            self.activity.record_leaks(hits, where)
+        return len(hits)
+
     def scramble(self, text: str) -> ScrambleResult:
         if not text:
             return ScrambleResult(text)

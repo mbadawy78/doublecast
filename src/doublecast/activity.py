@@ -33,6 +33,16 @@ def mask(value: str) -> str:
     return value[:2] + "•••"
 
 
+def mask_path(path: str) -> str:
+    """Keep the shape of where it happened, not the names: "Trio bakery/IT/x.xlsx" -> "Tr•••/IT/x•••.xlsx"."""
+    parts = str(path).replace("\\", "/").split("/")
+    out = []
+    for p in parts[-3:]:
+        stem, dot, ext = p.rpartition(".")
+        out.append(mask(stem) + dot + ext if dot and len(ext) <= 5 else mask(p) if len(p) > 3 else p)
+    return "/".join(out)
+
+
 class Activity:
     def __init__(self, path: Path, source: str = "doublecast"):
         self.path = Path(path)
@@ -40,6 +50,7 @@ class Activity:
         self._lock = threading.Lock()
         self._delta: dict[str, dict[str, int]] = {}
         self._last: list[dict] = []
+        self._leaks: list[dict] = []
         self._saved_at = 0.0
         atexit.register(self.flush)
 
@@ -61,12 +72,30 @@ class Activity:
         if time.monotonic() - self._saved_at > 2:
             self.flush()
 
+    def record_leaks(self, hits: list[tuple[str, str]], where: str) -> None:
+        """A known value got out: kept (masked) so the menu-bar icon and `status` can raise it."""
+        day = dt.date.today().isoformat()
+        now = dt.datetime.now().strftime("%H:%M")
+        with self._lock:
+            self._leaks.extend(
+                {
+                    "day": day,
+                    "time": now,
+                    "category": c,
+                    "value": mask(v),
+                    "where": mask_path(where),
+                    "via": self.source,
+                }
+                for c, v in hits[:20]
+            )
+        self.flush()
+
     def flush(self) -> None:
         with self._lock:
-            if not self._delta and not self._last:
+            if not self._delta and not self._last and not self._leaks:
                 return
-            delta, last = self._delta, self._last
-            self._delta, self._last = {}, []
+            delta, last, leaks = self._delta, self._last, self._leaks
+            self._delta, self._last, self._leaks = {}, [], []
         try:
             data = read(self.path)
             for day, counts in delta.items():
@@ -75,6 +104,7 @@ class Activity:
                     bucket[cat] = bucket.get(cat, 0) + n
                     data["total"][cat] = data["total"].get(cat, 0) + n
             data["last"] = (data["last"] + last)[-KEEP_LAST:]
+            data["leaks"] = (data["leaks"] + leaks)[-200:]
             for day in sorted(data["days"])[:-KEEP_DAYS]:
                 data["days"].pop(day, None)
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +126,7 @@ def read(path: Path) -> dict:
     data.setdefault("days", {})
     data.setdefault("total", {})
     data.setdefault("last", [])
+    data.setdefault("leaks", [])
     return data
 
 
@@ -108,4 +139,5 @@ def summary(path: Path) -> dict:
         "total": data["total"],
         "total_all": sum(data["total"].values()),
         "last": data["last"][-5:][::-1],
+        "leaks_today": [x for x in data["leaks"] if x.get("day") == dt.date.today().isoformat()][::-1],
     }

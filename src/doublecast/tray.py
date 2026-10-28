@@ -72,7 +72,19 @@ class Model:
 
     @property
     def title(self) -> str:
+        leaks = len(self.data.get("leaks_today") or [])
+        if leaks:
+            return f"🛡⚠ {leaks}"  # a known value got through today: look at the menu
         return f"🛡 {self.data.get('today_total', 0)}"
+
+    @property
+    def leak_lines(self) -> list[str]:
+        leaks = self.data.get("leaks_today") or []
+        if not leaks:
+            return ["No leaks found today"]
+        return [
+            f"⚠ {x['time']}  {x['category'].lower()}  {x['value']}  in {x['where']}  ({x['via']})" for x in leaks[:10]
+        ]
 
     @property
     def proxy_line(self) -> str:
@@ -240,6 +252,7 @@ def _run_macos(model: Model) -> int:
             self.total_item = rumps.MenuItem(model.total_line)
             self.last_item = rumps.MenuItem("Last swaps")
             self.mirror_item = rumps.MenuItem("Mirrored folders")
+            self.leak_item = rumps.MenuItem("Leak alarm")
             self.login_item = rumps.MenuItem("Start at login", callback=self.on_login)
             self.login_item.state = autostart_enabled()
             self.menu = [
@@ -248,6 +261,7 @@ def _run_macos(model: Model) -> int:
                 self.today_item,
                 self.total_item,
                 self.last_item,
+                self.leak_item,
                 self.mirror_item,
                 None,
                 rumps.MenuItem("Scramble clipboard", callback=self.on_scramble, key="s"),
@@ -277,6 +291,13 @@ def _run_macos(model: Model) -> int:
                 pass
             for line in model.mirror_lines:
                 self.mirror_item.add(rumps.MenuItem(line))
+            try:
+                self.leak_item.clear()
+            except Exception:
+                pass
+            self.leak_item.title = "⚠ Leak alarm" if model.data.get("leaks_today") else "Leak alarm: all clear"
+            for line in model.leak_lines:
+                self.leak_item.add(rumps.MenuItem(line))
 
         def _say(self, message: str):
             rumps.notification("Doublecast", "", message)
@@ -338,6 +359,10 @@ def _run_pystray(model: Model) -> int:
         pystray.MenuItem(lambda _: model.today_line, None, enabled=False),
         pystray.MenuItem(lambda _: model.total_line, None, enabled=False),
         pystray.MenuItem("Last swaps", pystray.Menu(last_items)),
+        pystray.MenuItem(
+            lambda _: "⚠ Leak alarm" if model.data.get("leaks_today") else "Leak alarm: all clear",
+            pystray.Menu(lambda: [pystray.MenuItem(x, None, enabled=False) for x in model.leak_lines]),
+        ),
         pystray.MenuItem(
             "Mirrored folders",
             pystray.Menu(lambda: [pystray.MenuItem(x, None, enabled=False) for x in model.mirror_lines]),

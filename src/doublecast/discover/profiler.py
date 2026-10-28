@@ -261,6 +261,13 @@ def _ratio(values: list[str], test) -> float:
     return sum(1 for v in values if test(v)) / len(values) if values else 0.0
 
 
+def _phone_like(v: str) -> bool:
+    """A phone number, not an amount: "-45,212.5" and "7520035.25" are P&L figures (a real misfire, Oct 2026)."""
+    if v.startswith("-") or re.fullmatch(r"\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,4})?|\d+[.,]\d{1,4}", v):
+        return False
+    return _PHONE.match(v) is not None and sum(c.isdigit() for c in v) >= 8
+
+
 def classify_column(column: str, values: Iterable[object], table: str = "") -> ColumnVerdict:
     sample = [str(v).strip() for v in values if v is not None and str(v).strip()]
     sample = sample[:500]
@@ -284,10 +291,7 @@ def classify_column(column: str, values: Iterable[object], table: str = "") -> C
         return ColumnVerdict("TAX_ID", 0.9 if header_cat == "TAX_ID" else 0.7, "values pass the Greek VAT checksum")
     if header_cat in ("TAX_ID", "IBAN", "EMAIL", "ADDRESS"):
         return ColumnVerdict(header_cat, 0.85, f"column name ({kw})")
-    if header_cat == "PHONE" or (
-        _ratio(sample, lambda v: _PHONE.match(v) is not None and sum(c.isdigit() for c in v) >= 8) >= 0.8
-        and numeric < 1.0
-    ):
+    if header_cat == "PHONE" or (_ratio(sample, _phone_like) >= 0.8 and numeric < 1.0):
         if _ratio(sample, lambda v: sum(c.isdigit() for c in v) >= 7) >= 0.6:
             return ColumnVerdict("PHONE", 0.9, "values are phone numbers")
 

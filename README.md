@@ -134,6 +134,22 @@ The AI lists, searches and reads it through Doublecast (`list_folder`, `search_f
 (`save_file`) lands in your folder with the real values back. Places you didn't allow can't be
 reached. Install LibreOffice to let it see formula results in Excel models.
 
+### Connectors on your computer (Power BI and other local MCP servers)
+
+```bash
+doublecast connect powerbi    # once; then quit and reopen the Claude app
+doublecast schedule           # refresh the names every night
+```
+
+The connector now runs behind Doublecast: query results reach the AI scrambled (names swapped,
+amounts scaled, counts and percentages as they are), and the AI's queries get the real names back
+before they reach your data. Discovery reads your customers, suppliers and people through the
+same connector. `doublecast connect powerbi --undo` puts it back. Connectors added in claude.ai
+run in the cloud and cannot be wrapped.
+
+**Leak alarm.** Everything leaving through these routes is checked against every name Doublecast
+knows. If one gets through, `doublecast status` lists it (masked) and the menu-bar icon shows 🛡⚠.
+
 ### Folders: a scrambled twin (Claude app, Cowork, any agent with folder access)
 
 When an AI gets access to a folder it can open anything in it, with its own tools. Asking it to
@@ -292,6 +308,8 @@ Full reference: [docs/configuration.md](docs/configuration.md). Industry packs: 
 | `doublecast scan FILE` | Show what would be swapped (changes nothing) |
 | `doublecast scramble FILE` / `restore FILE` | Files, or `-` for stdin → stdout |
 | `doublecast clip scramble` / `clip restore` | Clipboard, for web chats |
+| `doublecast connect NAME` / `--undo` | Put a local connector of the Claude app behind Doublecast |
+| `doublecast schedule [--at HH:MM]` / `--off` | Refresh discovery every night |
 | `doublecast mirror FOLDER` | Keep a scrambled twin of a folder for the AI, in sync both ways |
 | `doublecast proxy` | Local proxy for API tools |
 | `doublecast run -- <command>` | Run one command through a temporary proxy |

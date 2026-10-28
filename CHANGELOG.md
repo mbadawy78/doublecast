@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.7 (2026-10-28)
+
+Less left to habit.
+
+- **Connectors behind Doublecast:** `doublecast connect powerbi` puts a local connector of the
+  Claude app (here, Power BI) behind `doublecast wrap`. Results reach the AI scrambled, table by
+  table (a "Customer" column swapped whole, a "Sales" measure scaled, counts and % untouched);
+  the AI's queries get the real names back before they reach the connector. `--undo` restores the
+  config from a backup.
+- **Discovery through the connector:** once connected, `doublecast discover` reads customer,
+  supplier and people names from Power BI with the connector's own sign-in, no extra setup.
+- **`doublecast schedule`:** discovery every night (LaunchAgent, Task Scheduler or cron), so names
+  are known before any file or query is read.
+- **Leak alarm:** whatever leaves through the folder tools, a wrapped connector or the proxy is
+  checked against every known name; a hit is logged (masked), shown by `doublecast status`, turns
+  the menu-bar icon to 🛡⚠, and in `mode: block` stops the request.
+- Discovery no longer mistakes amounts ("-45,212.5", "7520035.25") for phone numbers.
+
 ## 0.2.6 (2026-10-25)
 
 Found by testing on a real Dynamics 365 export: customer names reached the AI through columns

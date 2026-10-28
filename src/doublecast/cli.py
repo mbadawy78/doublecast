@@ -549,6 +549,11 @@ def cmd_status(args) -> int:
     today = ", ".join(f"{k.lower()} {v}" for k, v in sorted(data["today"].items(), key=lambda kv: -kv[1]))
     print(f"today   {data['today_total']} swapped" + (f"  ({today})" if today else ""))
     print(f"total   {data['total_all']} swapped")
+    leaks = data.get("leaks_today") or []
+    if leaks:
+        print(f"{RED}! {len(leaks)} known value(s) got through today{RESET} (masked):")
+        for x in leaks[:10]:
+            print(f"  {x['time']} {x['category'].lower():8s} {x['value']}  in {x['where']}  {DIM}{x['via']}{RESET}")
     for row in data["last"]:
         print(
             f"  {DIM}{row['time']}{RESET} {row['category'].lower():8s} {row['from']} -> {row['to']}  {DIM}{row['via']}{RESET}"
@@ -610,6 +615,37 @@ def cmd_mirror(args) -> int:
         m.watch(interval=args.interval, on_sync=show)
     except KeyboardInterrupt:
         pass
+    return 0
+
+
+def cmd_connect(args) -> int:
+    from . import connectors
+
+    cfg = load_config(getattr(args, "config", None))
+    if args.undo:
+        print(connectors.disconnect(cfg.home, args.name))
+        return 0
+    print(connectors.connect(cfg.home, args.name, args.claude_config))
+    print(
+        f"{DIM}Discovery now reads names from it too: run `doublecast discover` (or schedule it: "
+        f"doublecast schedule){RESET}"
+    )
+    return 0
+
+
+def cmd_wrap(args) -> int:
+    from .wrap import run_wrap
+
+    command = list(args.command)
+    if command and command[0] == "--":
+        command = command[1:]
+    return run_wrap(_engine(args), command, args.name)
+
+
+def cmd_schedule(args) -> int:
+    from .schedule import schedule
+
+    print(schedule(enable=not args.off, at=args.at))
     return 0
 
 
@@ -769,6 +805,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--remove", action="store_true", help="stop mirroring this folder")
     s.add_argument("--accept", action="store_true", help="bring back AI changes that were held (too many at once)")
     s.set_defaults(func=cmd_mirror)
+    s = sub.add_parser("connect", help="put a local connector (e.g. powerbi) of the Claude app behind Doublecast")
+    s.add_argument("name", help="the connector's name in the Claude app config, e.g. powerbi")
+    s.add_argument("--undo", action="store_true", help="put it back as it was")
+    s.add_argument("--claude-config", help="path to claude_desktop_config.json (found automatically)")
+    s.set_defaults(func=cmd_connect)
+    s = sub.add_parser("wrap", help="run a connector (MCP server) through Doublecast (used by `connect`)")
+    s.add_argument("--name", default="connector")
+    s.add_argument("command", nargs=argparse.REMAINDER)
+    s.set_defaults(func=cmd_wrap)
+    s = sub.add_parser("schedule", help="refresh discovery every night (names from your connected systems)")
+    s.add_argument("--at", default="02:30", help="time of day, HH:MM (default 02:30)")
+    s.add_argument("--off", action="store_true", help="stop the nightly refresh")
+    s.set_defaults(func=cmd_schedule)
     s = sub.add_parser("allow", help="let the AI open a place through Doublecast (scrambled, no copies)")
     s.add_argument("folder", nargs="?", help="e.g. ~/Downloads (no folder: show what is allowed)")
     s.add_argument("--remove", action="store_true", help="stop allowing this folder")

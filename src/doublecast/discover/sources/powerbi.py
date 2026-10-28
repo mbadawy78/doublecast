@@ -85,7 +85,7 @@ class PowerBISource(Source):
 
     def tables(self) -> Iterator[Table]:
         for base, ds in self._datasets():
-            label = ds.get("name", base.rsplit("/", 1)[-1])
+            label = ds.get("name") or str(base).rsplit("/", 1)[-1]
             if self.dataset_filter and label.lower() not in self.dataset_filter:
                 continue
             prefix = f"{ds.get('workspace') or 'My workspace'} / {label}"
@@ -148,3 +148,49 @@ class PowerBISource(Source):
 
     def close(self) -> None:
         self.api.close()
+
+
+class McpPowerBISource(PowerBISource):
+    """Power BI through the local Power BI connector the Claude app already uses.
+
+    No separate sign-in: the connector's own (see `doublecast connect powerbi`). Datasets are the
+    ones the connector knows (`powerbi_known_datasets`); queries go through `powerbi_run_dax`.
+    """
+
+    def __init__(self, name: str, client, datasets: list[str] | None = None, tables: list[str] | None = None):
+        Source.__init__(self, name)
+        self.client = client
+        self.workspaces: list[str] = []
+        self.dataset_filter = [d.lower() for d in datasets or []]
+        self.fixed_tables = tables or []
+        self.include_my_workspace = False
+        self.skipped: list[str] = []
+        self._where: dict[str, tuple] = {}
+
+    def _datasets(self):
+        import json
+
+        try:
+            known = json.loads(self.client.call("powerbi_known_datasets", {}))
+        except (ValueError, RuntimeError) as exc:
+            raise SourceError(f"The Power BI connector did not list its datasets: {exc}") from exc
+        for alias, d in (known.get("datasets") or {}).items():
+            yield (d.get("workspace"), alias), {"name": alias, "workspace": d.get("workspace")}
+
+    def _query(self, base, dax: str) -> list[dict]:
+        import json
+
+        workspace, dataset = base
+        try:
+            text = self.client.call(
+                "powerbi_run_dax", {"params": {"workspace": workspace, "dataset": dataset, "dax_query": dax}}
+            )
+            data = json.loads(text)
+        except (ValueError, RuntimeError, TimeoutError) as exc:
+            raise SourceError(str(exc)[:300]) from exc
+        if isinstance(data, dict) and data.get("error"):
+            raise SourceError(str(data["error"])[:300])
+        return (data.get("rows") if isinstance(data, dict) else data) or []
+
+    def close(self) -> None:
+        self.client.close()
