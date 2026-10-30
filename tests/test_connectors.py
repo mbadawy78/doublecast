@@ -212,3 +212,13 @@ def test_status_notices_when_the_app_undid_the_connection(tmp_path):
     assert protected(home) == {"powerbi": True}
     cfg.write_text(json.dumps(original), encoding="utf-8")  # the app wrote its old copy back
     assert protected(home) == {"powerbi": False}
+
+
+def test_structured_content_with_json_inside_is_scrambled_like_the_text(engine):
+    inner = json.dumps({"rows": [{"[Customer]": "Nordia Hellas", "[Sales]": 1000.0, "[Orders]": 7}]}, indent=2)
+    out = Scrambler(engine).result(
+        {"content": [{"type": "text", "text": inner}], "structuredContent": {"result": inner}}, "test"
+    )
+    for part in (out["content"][0]["text"], out["structuredContent"]["result"]):
+        row = json.loads(part)["rows"][0]
+        assert "Nordia" not in part and row["[Sales]"] != 1000.0 and row["[Orders]"] == 7

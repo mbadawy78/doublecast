@@ -101,6 +101,13 @@ class Scrambler:
                 return self.rows(obj)
             return [self.value(v, header, table) for v in obj]
         if isinstance(obj, str):
+            if obj.lstrip()[:1] in ("{", "[") and len(obj) > 1:
+                try:  # a JSON document inside a string (FastMCP's structuredContent {"result": "<json>"})
+                    inner = json.loads(obj)
+                except ValueError:
+                    inner = None
+                if isinstance(inner, (dict, list)):
+                    return json.dumps(self.value(inner), ensure_ascii=False, indent=2 if "\n" in obj else None)
             if header:
                 t, h = _split_key(header)
                 return scramble_cell(self.engine, h, obj, t or table)[0]
