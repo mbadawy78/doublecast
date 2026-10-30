@@ -199,3 +199,16 @@ def test_show_answer_opens_the_real_values_and_returns_none_of_them(tmp_path):
     finally:
         proc.stdin.close()
         proc.wait(timeout=10)
+
+
+def test_status_notices_when_the_app_undid_the_connection(tmp_path):
+    from doublecast.connectors import protected
+
+    cfg = tmp_path / "claude_desktop_config.json"
+    original = {"mcpServers": {"powerbi": {"command": "/x/run.sh", "args": []}}}
+    cfg.write_text(json.dumps(original), encoding="utf-8")
+    home = tmp_path / "home"
+    connect(home, "powerbi", cfg)
+    assert protected(home) == {"powerbi": True}
+    cfg.write_text(json.dumps(original), encoding="utf-8")  # the app wrote its old copy back
+    assert protected(home) == {"powerbi": False}

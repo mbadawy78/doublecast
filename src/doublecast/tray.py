@@ -71,8 +71,14 @@ class Model:
         return self.data
 
     @property
+    def unprotected(self) -> list[str]:
+        return [n for n, ok in (self.data.get("connectors") or {}).items() if not ok]
+
+    @property
     def title(self) -> str:
         leaks = len(self.data.get("leaks_today") or [])
+        if self.unprotected:
+            return "🛡⚠ " + ", ".join(self.unprotected)  # a connector is no longer behind Doublecast
         if leaks:
             return f"🛡⚠ {leaks}"  # a known value got through today: look at the menu
         return f"🛡 {self.data.get('today_total', 0)}"
@@ -80,8 +86,9 @@ class Model:
     @property
     def leak_lines(self) -> list[str]:
         leaks = self.data.get("leaks_today") or []
+        warn = [f"⚠ {n} is NOT protected: quit Claude (Cmd+Q), run `doublecast connect {n}`" for n in self.unprotected]
         if not leaks:
-            return ["No leaks found today"]
+            return warn or ["No leaks found today"]
         return [
             f"⚠ {x['time']}  {x['category'].lower()}  {x['value']}  in {x['where']}  ({x['via']})" for x in leaks[:10]
         ]
@@ -313,7 +320,8 @@ def _run_macos(model: Model) -> int:
                 self.leak_item.clear()
             except Exception:
                 pass
-            self.leak_item.title = "⚠ Leak alarm" if model.data.get("leaks_today") else "Leak alarm: all clear"
+            alarm = model.data.get("leaks_today") or model.unprotected
+            self.leak_item.title = "⚠ Leak alarm" if alarm else "Leak alarm: all clear"
             for line in model.leak_lines:
                 self.leak_item.add(rumps.MenuItem(line))
 
@@ -378,7 +386,9 @@ def _run_pystray(model: Model) -> int:
         pystray.MenuItem(lambda _: model.total_line, None, enabled=False),
         pystray.MenuItem("Last swaps", pystray.Menu(last_items)),
         pystray.MenuItem(
-            lambda _: "⚠ Leak alarm" if model.data.get("leaks_today") else "Leak alarm: all clear",
+            lambda _: (
+                "⚠ Leak alarm" if (model.data.get("leaks_today") or model.unprotected) else "Leak alarm: all clear"
+            ),
             pystray.Menu(lambda: [pystray.MenuItem(x, None, enabled=False) for x in model.leak_lines]),
         ),
         pystray.MenuItem(

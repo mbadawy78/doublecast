@@ -51,7 +51,33 @@ def _doublecast_command() -> list[str]:
     return [exe] if exe else [sys.executable, "-m", "doublecast"]
 
 
-def connect(home: Path, name: str, config_path: Path | None = None) -> str:
+def claude_app_running() -> bool:
+    """The Claude app keeps its settings in memory and writes them back when it quits, which
+    silently undoes any change made to the file while it runs (seen on a real Mac, Oct 2026)."""
+    if platform.system() != "Darwin":
+        return False
+    return subprocess.run(["pgrep", "-x", "Claude"], capture_output=True, check=False).returncode == 0
+
+
+def protected(home: Path) -> dict[str, bool]:
+    """For each connected connector: does the Claude app config still start it through Doublecast?"""
+    out = {}
+    for name, info in registered(home).items():
+        try:
+            data = json.loads(Path(info["config"]).read_text(encoding="utf-8"))
+            args = (data.get("mcpServers", {}).get(name) or {}).get("args") or []
+            out[name] = "wrap" in args and "--" in args
+        except (OSError, ValueError, KeyError):
+            out[name] = False
+    return out
+
+
+def connect(home: Path, name: str, config_path: Path | None = None, force: bool = False) -> str:
+    if config_path is None and not force and claude_app_running():
+        raise RuntimeError(
+            "Quit the Claude app first (Cmd+Q): it rewrites its settings when it quits and would undo "
+            "this change. Then run this again and reopen the app."
+        )
     path = Path(config_path or claude_config_path())
     data = json.loads(path.read_text(encoding="utf-8"))
     servers = data.get("mcpServers") or {}

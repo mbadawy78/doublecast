@@ -535,6 +535,12 @@ def status_data(cfg) -> dict:
     }
     data["workspace"] = cfg.workspace
     data["version"] = __version__
+    try:
+        from .connectors import protected
+
+        data["connectors"] = protected(cfg.home)
+    except Exception:  # noqa: BLE001
+        data["connectors"] = {}
     return data
 
 
@@ -551,6 +557,13 @@ def cmd_status(args) -> int:
     today = ", ".join(f"{k.lower()} {v}" for k, v in sorted(data["today"].items(), key=lambda kv: -kv[1]))
     print(f"today   {data['today_total']} swapped" + (f"  ({today})" if today else ""))
     print(f"total   {data['total_all']} swapped")
+    for name, ok in (data.get("connectors") or {}).items():
+        print(
+            f"{GREEN}●{RESET} {name} protected"
+            if ok
+            else f"{RED}! {name} is NOT protected{RESET}: the Claude app "
+            f"config starts it directly. Quit the app (Cmd+Q), run `doublecast connect {name}`, reopen it."
+        )
     leaks = data.get("leaks_today") or []
     if leaks:
         print(f"{RED}! {len(leaks)} known value(s) got through today{RESET} (masked):")
@@ -627,7 +640,7 @@ def cmd_connect(args) -> int:
     if args.undo:
         print(connectors.disconnect(cfg.home, args.name))
         return 0
-    print(connectors.connect(cfg.home, args.name, args.claude_config))
+    print(connectors.connect(cfg.home, args.name, args.claude_config, force=args.force))
     print(
         f"{DIM}Discovery now reads names from it too: run `doublecast discover` (or schedule it: "
         f"doublecast schedule){RESET}"
@@ -811,6 +824,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name", help="the connector's name in the Claude app config, e.g. powerbi")
     s.add_argument("--undo", action="store_true", help="put it back as it was")
     s.add_argument("--claude-config", help="path to claude_desktop_config.json (found automatically)")
+    s.add_argument("--force", action="store_true", help="change the config even if the Claude app is running")
     s.set_defaults(func=cmd_connect)
     s = sub.add_parser("wrap", help="run a connector (MCP server) through Doublecast (used by `connect`)")
     s.add_argument("--name", default="connector")

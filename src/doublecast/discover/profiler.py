@@ -61,7 +61,9 @@ HEADER_KEYWORDS: dict[str, list[str]] = {
     "ADDRESS": _f("address,street,addr,διευθυνσ,οδος,adresse,strasse,anschrift,indirizzo,via,direccion,calle"),
     "PROJECT": _f("project,εργο,projekt,projet,progetto,proyecto"),
     "EMAIL": _f("email,e-mail,mail"),
-    "PHONE": _f("phone,tel,telephone,mobile,fax,cell,τηλ,τηλεφων,κινητ,telefon,handy,telephone,portable,telefono,movil"),
+    "PHONE": _f(
+        "phone,tel,telephone,mobile,fax,cell,τηλ,τηλεφων,κινητ,telefon,handy,telephone,portable,telefono,movil"
+    ),
     "TAX_ID": _f(
         "vat,tax id,tax no,tin,afm,αφμ,a.f.m,ust-id,ustid,steuernummer,siret,siren,tva,partita iva,p.iva,nif,cif"
     ),
