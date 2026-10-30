@@ -164,14 +164,18 @@ def scan(
                 continue
             columns = table.columns or sorted({k for r in rows for k in r})
             for col in columns:
-                verdict = classify_column(col, (r.get(col) for r in rows), table.name)
+                try:
+                    verdict = classify_column(col, (r.get(col) for r in rows), table.name)
+                except Exception as exc:  # noqa: BLE001 - one odd column must not stop a nightly scan
+                    result.skipped.append(f"{table.name}.{col}: could not classify ({type(exc).__name__})")
+                    continue
                 cr = ColumnResult(table.name, col, verdict.category, verdict.confidence, verdict.reason)
                 result.columns.append(cr)
                 if verdict.category not in TERM_CATEGORIES:
                     continue
                 try:
                     terms, skipped = extract_terms(verdict.category, source.values(table, col, max_values), max_values)
-                except SourceError as exc:
+                except (SourceError, ValueError) as exc:
                     result.skipped.append(f"{table.name}.{col}: {exc}")
                     continue
                 cr.values, cr.skipped, cr.examples = len(terms), skipped, terms[:3]

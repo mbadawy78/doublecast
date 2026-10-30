@@ -50,3 +50,11 @@ def test_shape_preserving_keeps_shape():
     assert out.startswith("INV-")
     assert len(out) == len("INV-2024/0187")
     assert out[8] == "/"
+
+
+def test_greek_text_is_never_an_iban():
+    from doublecast.discover.profiler import classify_column
+    from doublecast.validators import iban_valid
+
+    assert not iban_valid("ΤΑ12ΚΑΒΑΛΑΣ ΧΟΝΔΡΙΚΗ 001")
+    assert classify_column("Τιμοκατάλογος", ["ΤΑ12ΚΑΒΑΛΑΣ ΧΟΝΔΡΙΚΗ 001", "ΧΟ34ΛΙΑΝΙΚΗ ΑΘΗΝΑ 002"]).category != "IBAN"

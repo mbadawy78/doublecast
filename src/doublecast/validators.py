@@ -46,8 +46,8 @@ def iban_valid(iban: str) -> bool:
     s = iban.replace(" ", "").upper()
     if len(s) < 15 or len(s) > 34 or not s[:2].isalpha() or not s[2:4].isdigit():
         return False
-    if not s.isalnum():
-        return False
+    if not s.isalnum() or not s.isascii():
+        return False  # Greek letters are "alphanumeric" too: "ΤΑ12..." is not an IBAN
     rearranged = s[4:] + s[:4]
     return _iban_numeric(rearranged) % 97 == 1
 
